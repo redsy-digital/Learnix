@@ -233,7 +233,7 @@ export const LandingPage: React.FC = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h3 className="font-bold text-slate-800 text-sm">Olá, Gabriel! 👋</h3>
+                    <h3 className="font-bold text-slate-800 text-sm">Olá, Pedro! 👋</h3>
                     <p className="text-[10px] text-slate-500">Pronto para a sessão de estudo de hoje?</p>
                   </div>
                   <div className="bg-amber-100 text-amber-700 text-[10px] font-extrabold px-2 py-1 rounded-full flex items-center space-x-1">
@@ -535,7 +535,7 @@ export const LandingPage: React.FC = () => {
               onClick={handleQuickLogin}
               className="bg-transparent hover:bg-white/10 border border-white/30 text-white font-bold px-8 py-3.5 rounded-xl text-sm sm:text-base transition"
             >
-              Entrar como Gabriel
+              Entrar como Pedro
             </button>
           </div>
         </div>

@@ -296,7 +296,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('learnix_user');
     return saved ? JSON.parse(saved) : {
-      name: 'Gabriel Rodrigues',
+      name: 'Pedro dos Santos',
       email: 'contact.redsy.digital@gmail.com',// Preencher com email padronizado ou real
       schoolYear: '11º Ano - Ciências e Tecnologias',
       school: 'Escola Secundária de Letras e Ciências',

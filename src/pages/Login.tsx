@@ -134,7 +134,7 @@ export const Login: React.FC = () => {
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="ex. Gabriel Rodrigues"
+                    placeholder="ex. Pedro dos Santos"
                     className="block w-full pl-10 pr-4 py-3 bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 text-sm focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition"
                   />
                 </div>
@@ -309,7 +309,7 @@ export const Login: React.FC = () => {
             </div>
             <div>
               <p className="text-xs font-bold text-white uppercase tracking-wider">Atingiu Streak Diário</p>
-              <p className="text-[11px] text-slate-300">Gabriel completou 6 dias de meta escolar seguida</p>
+              <p className="text-[11px] text-slate-300">Pedro completou 6 dias de meta escolar seguida</p>
             </div>
           </div>
           <div className="space-y-2 text-xs">
