@@ -1,0 +1,6 @@
+{
+  "name": "Learnix",
+  "description": "Plataforma inteligente de apoio ao estudo e desempenho académico que permite registrar aprendizados, organizar horários e simular exercícios personalizados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
