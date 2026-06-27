@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useApp } from '../context/AppContext';
+
 import {
   Sparkles,
   BookOpen,
@@ -27,7 +27,6 @@ import {
 
 export const LandingPage: React.FC = () => {
   const navigate = useNavigate();
-  const { login } = useApp();
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
 
   const benefits = [
@@ -116,8 +115,7 @@ export const LandingPage: React.FC = () => {
   ];
 
   const handleQuickLogin = () => {
-    login();
-    navigate('/dashboard');
+    navigate('/login');
   };
 
   return (
