@@ -35,6 +35,8 @@ import {
 } from '../types';
 import { useAuth } from './AuthContext';
 import { useSubjects } from '../hooks/useSubjects';
+import { useContents } from '../hooks/useContents';
+import type { CreateContentPayload, UpdateContentPayload } from '../services/contentsService';
 
 // ─── Interface do contexto ────────────────────────────────────────────────────
 
@@ -64,9 +66,16 @@ interface AppContextType {
   getDependencies: (id: string) => Promise<{ contents: number; evaluations: number; scheduleSlots: number }>;
   refreshSubjects: () => Promise<void>;
 
-  // Dados académicos (mock — serão substituídos por Supabase em fases futuras)
+  // Conteúdos estudados — dados reais do Supabase
   contents: ContentRecord[];
-  addContent: (content: Omit<ContentRecord, 'id'>) => void;
+  contentsLoading: boolean;
+  contentsError: string | null;
+  addContent:    (payload: CreateContentPayload) => Promise<ContentRecord>;
+  editContent:   (id: string, payload: UpdateContentPayload) => Promise<ContentRecord>;
+  removeContent: (id: string, photoPath?: string) => Promise<void>;
+  uploadPhoto:   (file: File) => Promise<string>;
+  getSignedPhotoUrl: (photoPath: string) => Promise<string>;
+  refreshContents: () => Promise<void>;
   schedule: ScheduleSlot[];
   addScheduleSlot: (slot: Omit<ScheduleSlot, 'id'>) => void;
   removeScheduleSlot: (id: string) => void;
@@ -88,14 +97,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const INITIAL_CONTENTS: ContentRecord[] = [
-  { id: 'c1', subjectId: 'matematica', subjectName: 'Matemática', date: '2026-06-22', title: 'Derivadas e Regra da Cadeia', description: 'Estudo aprofundado das derivadas de funções compostas. Aprendemos a identificar a função interna e externa e a aplicar a fórmula f\'(g(x)) * g\'(x). Resolvemos diversos problemas práticos aplicados à física clássica.', observations: 'Fazer os exercícios de 1 a 15 da página 142 do manual escolar.' },
-  { id: 'c2', subjectId: 'portugues',  subjectName: 'Português',  date: '2026-06-22', title: 'Análise de "Os Lusíadas" - Canto V', description: 'Leitura comentada do Canto V, focando no episódio do Gigante Adamastor que simboliza os perigos enfrentados nas navegações e a superação humana. Analisamos os recursos expressivos mais frequentes como a hipérbole e a personificação.', observations: 'Preparar ficha de leitura resumida sobre o simbolismo do Adamastor.' },
-  { id: 'c3', subjectId: 'fisica',     subjectName: 'Física',     date: '2026-06-21', title: 'Leis de Kepler e Gravitação', description: 'Definição e equacionamento das três leis de Kepler: Lei das Órbitas, Lei das Áreas e Lei dos Períodos. Deduzimos a constante ideal de proporcionalidade usando a Lei de Gravitação Universal de Newton.', observations: 'Rever as fórmulas de conversão de unidades astronómicas.' },
-  { id: 'c4', subjectId: 'quimica',    subjectName: 'Química',    date: '2026-06-19', title: 'Cinética Química e Fatores de Velocidade', description: 'Fatores que alteram a velocidade das reações químicas: temperatura, concentração de reagentes, pressão (em sistemas gasosos), superfície de contacto e presença de catalisador. Teoria das Colisões e Energia de Ativação.', observations: 'Foco na interpretação de diagramas de energia.' },
-  { id: 'c5', subjectId: 'biologia',   subjectName: 'Biologia',   date: '2026-06-15', title: 'Mitose e Divisão Celular', description: 'Estudo do ciclo celular. Fases detalhadas da mitose: Prófase (condensação dos cromossomas), Metáfase (placa equatorial), Anáfase (separação dos cromatídeos) e Telófase (reorganização dos núcleos). Citocinese vegetal vs animal.', observations: 'Reconhecer imagens de lâminas microscópicas das fases no exame prático.' },
-];
 
 const INITIAL_SCHEDULE: ScheduleSlot[] = [
   { id: 's1',  day: 'Segunda', time: '08:15 - 09:45', subjectId: 'matematica', subjectName: 'Matemática', room: 'Sala 102' },
@@ -213,12 +214,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refresh:   refreshSubjects,
   } = useSubjects();
 
-  // ── Dados académicos (mock — com localStorage para persistência local) ────
-  const [contents, setContents] = useState<ContentRecord[]>(() => {
-    const saved = localStorage.getItem('learnix_contents');
-    return saved ? JSON.parse(saved) : INITIAL_CONTENTS;
-  });
+  // ── Conteúdos — dados reais do Supabase (via hook) ───────────────────────
+  const {
+    contents,
+    isLoading: contentsLoading,
+    error:     contentsError,
+    addContent,
+    editContent,
+    removeContent,
+    uploadPhoto,
+    getSignedPhotoUrl,
+    refresh:   refreshContents,
+  } = useContents();
 
+  // ── Dados académicos (mock — com localStorage para persistência local) ────
   const [schedule, setSchedule] = useState<ScheduleSlot[]>(() => {
     const saved = localStorage.getItem('learnix_schedule');
     return saved ? JSON.parse(saved) : INITIAL_SCHEDULE;
@@ -246,7 +255,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [aiQuestions, setAiQuestions] = useState<AIQuestion[]>(DEFAULT_AI_QUESTIONS);
 
   // ── Sync mock data para localStorage ─────────────────────────────────────
-  useEffect(() => { localStorage.setItem('learnix_contents',      JSON.stringify(contents)); },      [contents]);
   useEffect(() => { localStorage.setItem('learnix_schedule',      JSON.stringify(schedule)); },      [schedule]);
   useEffect(() => { localStorage.setItem('learnix_evaluations',   JSON.stringify(evaluations)); },   [evaluations]);
   useEffect(() => { localStorage.setItem('learnix_goals',         JSON.stringify(goals)); },         [goals]);
@@ -267,23 +275,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (profile) updateProfile({ theme_mode: themeMode }).catch(() => {});
   }, [themeMode]);
 
-  // ── Mutadores académicos (inalterados) ────────────────────────────────────
-
-  const addContent = (newRecord: Omit<ContentRecord, 'id'>) => {
-    const id = `c_${Date.now()}`;
-    const record: ContentRecord = { id, ...newRecord };
-    setContents((prev) => [record, ...prev]);
-    // Nota: subjects.contentsCount é agora calculado pela VIEW subject_stats no Supabase.
-    // refreshSubjects() será chamado quando o módulo de conteúdos for integrado ao Supabase.
-    setGoals((prev) => prev.map((g) => {
-      if ((g.category === 'Estudo' || g.unit === 'resumo' || g.unit === 'exercícios') && g.current < g.target) {
-        const nextVal = g.current + 1;
-        return { ...g, current: nextVal, isCompleted: nextVal >= g.target };
-      }
-      return g;
-    }));
-    setNotifications((prev) => prev.map((n) => n.id === 'n1' ? { ...n, read: true } : n));
-  };
+  // ── Mutadores académicos (mock restante) ─────────────────────────────────
 
   const addScheduleSlot = (newSlot: Omit<ScheduleSlot, 'id'>) => {
     const id = `s_${Date.now()}`;
@@ -356,9 +348,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeSubject,
         getDependencies,
         refreshSubjects,
-        // Dados académicos mock
+        // Conteúdos reais (Supabase)
         contents,
+        contentsLoading,
+        contentsError,
         addContent,
+        editContent,
+        removeContent,
+        uploadPhoto,
+        getSignedPhotoUrl,
+        refreshContents,
+        // Dados académicos mock
         schedule,
         addScheduleSlot,
         removeScheduleSlot,
