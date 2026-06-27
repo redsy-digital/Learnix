@@ -30,8 +30,11 @@ import {
   AcademicGoal,
   AppNotification,
   AIQuestion,
+  CreateSubjectPayload,
+  UpdateSubjectPayload,
 } from '../types';
 import { useAuth } from './AuthContext';
+import { useSubjects } from '../hooks/useSubjects';
 
 // ─── Interface do contexto ────────────────────────────────────────────────────
 
@@ -51,8 +54,17 @@ interface AppContextType {
   isLoggedIn: boolean;
   logout: () => void;
 
-  // Dados académicos (mock — serão substituídos por Supabase em fases futuras)
+  // Disciplinas — dados reais do Supabase
   subjects: Subject[];
+  subjectsLoading: boolean;
+  subjectsError: string | null;
+  addSubject:    (payload: CreateSubjectPayload) => Promise<Subject>;
+  editSubject:   (id: string, payload: UpdateSubjectPayload) => Promise<Subject>;
+  removeSubject: (id: string) => Promise<void>;
+  getDependencies: (id: string) => Promise<{ contents: number; evaluations: number; scheduleSlots: number }>;
+  refreshSubjects: () => Promise<void>;
+
+  // Dados académicos (mock — serão substituídos por Supabase em fases futuras)
   contents: ContentRecord[];
   addContent: (content: Omit<ContentRecord, 'id'>) => void;
   schedule: ScheduleSlot[];
@@ -76,18 +88,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const INITIAL_SUBJECTS: Subject[] = [
-  { id: 'matematica', name: 'Matemática',  color: 'blue',    colorHex: '#2563EB', average: 15.8, performance: 81, contentsCount: 14, evaluationsCount: 3, lastActivity: 'Hoje' },
-  { id: 'fisica',     name: 'Física',      color: 'indigo',  colorHex: '#6366F1', average: 14.2, performance: 72, contentsCount: 8,  evaluationsCount: 2, lastActivity: 'Ontem' },
-  { id: 'quimica',    name: 'Química',     color: 'purple',  colorHex: '#7C3AED', average: 16.5, performance: 84, contentsCount: 9,  evaluationsCount: 2, lastActivity: 'Há 3 dias' },
-  { id: 'biologia',   name: 'Biologia',    color: 'emerald', colorHex: '#10B981', average: 17.2, performance: 88, contentsCount: 11, evaluationsCount: 3, lastActivity: 'Há 1 semana' },
-  { id: 'geografia',  name: 'Geografia',   color: 'amber',   colorHex: '#F59E0B', average: 15.0, performance: 77, contentsCount: 6,  evaluationsCount: 2, lastActivity: 'Há 4 dias' },
-  { id: 'historia',   name: 'História',    color: 'rose',    colorHex: '#F43F5E', average: 13.9, performance: 68, contentsCount: 7,  evaluationsCount: 2, lastActivity: 'Ontem' },
-  { id: 'portugues',  name: 'Português',   color: 'teal',    colorHex: '#14B8A6', average: 16.0, performance: 82, contentsCount: 12, evaluationsCount: 3, lastActivity: 'Hoje' },
-  { id: 'ingles',     name: 'Inglês',      color: 'sky',     colorHex: '#0EA5E9', average: 18.1, performance: 92, contentsCount: 8,  evaluationsCount: 2, lastActivity: 'Há 2 semanas' },
-  { id: 'frances',    name: 'Francês',     color: 'violet',  colorHex: '#8B5CF6', average: 14.8, performance: 74, contentsCount: 5,  evaluationsCount: 1, lastActivity: 'Há 5 dias' },
-];
 
 const INITIAL_CONTENTS: ContentRecord[] = [
   { id: 'c1', subjectId: 'matematica', subjectName: 'Matemática', date: '2026-06-22', title: 'Derivadas e Regra da Cadeia', description: 'Estudo aprofundado das derivadas de funções compostas. Aprendemos a identificar a função interna e externa e a aplicar a fórmula f\'(g(x)) * g\'(x). Resolvemos diversos problemas práticos aplicados à física clássica.', observations: 'Fazer os exercícios de 1 a 15 da página 142 do manual escolar.' },
@@ -201,12 +201,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // logout delega para o AuthContext (Supabase Auth)
   const logout = () => { signOut(); };
 
-  // ── Dados académicos (mock — com localStorage para persistência local) ────
-  const [subjects, setSubjects] = useState<Subject[]>(() => {
-    const saved = localStorage.getItem('learnix_subjects');
-    return saved ? JSON.parse(saved) : INITIAL_SUBJECTS;
-  });
+  // ── Disciplinas — dados reais do Supabase (via hook) ─────────────────────
+  const {
+    subjects,
+    isLoading: subjectsLoading,
+    error:     subjectsError,
+    addSubject,
+    editSubject,
+    removeSubject,
+    getDependencies,
+    refresh:   refreshSubjects,
+  } = useSubjects();
 
+  // ── Dados académicos (mock — com localStorage para persistência local) ────
   const [contents, setContents] = useState<ContentRecord[]>(() => {
     const saved = localStorage.getItem('learnix_contents');
     return saved ? JSON.parse(saved) : INITIAL_CONTENTS;
@@ -239,7 +246,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [aiQuestions, setAiQuestions] = useState<AIQuestion[]>(DEFAULT_AI_QUESTIONS);
 
   // ── Sync mock data para localStorage ─────────────────────────────────────
-  useEffect(() => { localStorage.setItem('learnix_subjects',      JSON.stringify(subjects)); },      [subjects]);
   useEffect(() => { localStorage.setItem('learnix_contents',      JSON.stringify(contents)); },      [contents]);
   useEffect(() => { localStorage.setItem('learnix_schedule',      JSON.stringify(schedule)); },      [schedule]);
   useEffect(() => { localStorage.setItem('learnix_evaluations',   JSON.stringify(evaluations)); },   [evaluations]);
@@ -267,11 +273,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `c_${Date.now()}`;
     const record: ContentRecord = { id, ...newRecord };
     setContents((prev) => [record, ...prev]);
-    setSubjects((prev) => prev.map((sub) =>
-      sub.id === newRecord.subjectId
-        ? { ...sub, contentsCount: sub.contentsCount + 1, lastActivity: 'Hoje' }
-        : sub
-    ));
+    // Nota: subjects.contentsCount é agora calculado pela VIEW subject_stats no Supabase.
+    // refreshSubjects() será chamado quando o módulo de conteúdos for integrado ao Supabase.
     setGoals((prev) => prev.map((g) => {
       if ((g.category === 'Estudo' || g.unit === 'resumo' || g.unit === 'exercícios') && g.current < g.target) {
         const nextVal = g.current + 1;
@@ -295,14 +298,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const id = `e_${Date.now()}`;
     const evaluation: Evaluation = { id, ...newEval };
     setEvaluations((prev) => [evaluation, ...prev]);
-    setSubjects((prevSubjects) => prevSubjects.map((sub) => {
-      if (sub.id !== newEval.subjectId) return sub;
-      const currentEvals = [evaluation, ...evaluations.filter((ev) => ev.subjectId === sub.id)];
-      const sum = currentEvals.reduce((acc, ev) => acc + (ev.gradeObtained / ev.maxValue) * 20, 0);
-      const newAvg  = parseFloat((sum / currentEvals.length).toFixed(1));
-      const newPerf = Math.round((newAvg / 20) * 100);
-      return { ...sub, evaluationsCount: currentEvals.length, average: newAvg, performance: newPerf, lastActivity: 'Hoje' };
-    }));
+    // Nota: subjects.average e performance são agora calculados pela VIEW subject_stats.
+    // refreshSubjects() será chamado quando o módulo de avaliações for integrado ao Supabase.
   };
 
   const addGoal = (newGoal: Omit<AcademicGoal, 'id' | 'isCompleted'>) => {
@@ -350,7 +347,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUser,
         isLoggedIn,
         logout,
+        // Disciplinas reais (Supabase)
         subjects,
+        subjectsLoading,
+        subjectsError,
+        addSubject,
+        editSubject,
+        removeSubject,
+        getDependencies,
+        refreshSubjects,
+        // Dados académicos mock
         contents,
         addContent,
         schedule,
