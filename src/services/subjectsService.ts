@@ -22,15 +22,15 @@ import type {
  */
 export function statsToSubject(row: SubjectStats): Subject {
   return {
-    id:              row.subject_id,
-    name:            row.name,
-    color:           row.color,
-    colorHex:        row.color_hex,
-    average:         Number(row.average ?? 0),
-    performance:     Number(row.performance ?? 0),
-    contentsCount:   Number(row.contents_count ?? 0),
-    evaluationsCount:Number(row.evaluations_count ?? 0),
-    lastActivity:    formatLastActivity(row.last_activity_date),
+    id:               row.subject_id,
+    name:             row.name,
+    color:            row.color,
+    colorHex:         row.color_hex,
+    average:          Number(row.average ?? 0),
+    performance:      Number(row.performance ?? 0),
+    contentsCount:    Number(row.contents_count ?? 0),
+    evaluationsCount: Number(row.evaluations_count ?? 0),
+    lastActivity:     formatLastActivity(row.last_activity_date),
   };
 }
 
@@ -67,14 +67,20 @@ export async function fetchSubjects(): Promise<Subject[]> {
 
 /**
  * Cria uma nova disciplina para o utilizador autenticado.
- * O user_id é injectado automaticamente pelo RLS do Supabase.
+ * O user_id é obtido da sessão activa e passado explicitamente —
+ * o RLS valida que coincide com auth.uid().
  * Lança erro se o nome já existir (UNIQUE constraint no DB).
  */
 export async function createSubject(payload: CreateSubjectPayload): Promise<Subject> {
-  // Inserir na tabela subjects
+  // Obter o utilizador autenticado da sessão activa
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) throw new Error('Sessão inválida. Inicia sessão novamente.');
+
+  // Inserir com user_id explícito — obrigatório para satisfazer a política RLS
   const { data: inserted, error: insertError } = await supabase
     .from('subjects')
     .insert({
+      user_id:   user.id,
       name:      payload.name.trim(),
       color:     payload.color,
       color_hex: payload.color_hex,
@@ -84,7 +90,6 @@ export async function createSubject(payload: CreateSubjectPayload): Promise<Subj
 
   if (insertError) {
     if (insertError.code === '23505') {
-      // unique_violation — nome já existe para este utilizador
       throw new Error('Já tens uma disciplina com esse nome. Escolhe um nome diferente.');
     }
     throw new Error(insertError.message);
