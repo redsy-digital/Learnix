@@ -36,7 +36,9 @@ import {
 import { useAuth } from './AuthContext';
 import { useSubjects } from '../hooks/useSubjects';
 import { useContents } from '../hooks/useContents';
+import { useEvaluations } from '../hooks/useEvaluations';
 import type { CreateContentPayload, UpdateContentPayload } from '../services/contentsService';
+import type { CreateEvaluationPayload, UpdateEvaluationPayload } from '../services/evaluationsService';
 
 // ─── Interface do contexto ────────────────────────────────────────────────────
 
@@ -79,8 +81,14 @@ interface AppContextType {
   schedule: ScheduleSlot[];
   addScheduleSlot: (slot: Omit<ScheduleSlot, 'id'>) => void;
   removeScheduleSlot: (id: string) => void;
+  // Avaliações — dados reais do Supabase
   evaluations: Evaluation[];
-  addEvaluation: (evaluation: Omit<Evaluation, 'id'>) => void;
+  evaluationsLoading: boolean;
+  evaluationsError: string | null;
+  addEvaluation:    (payload: CreateEvaluationPayload) => Promise<Evaluation>;
+  editEvaluation:   (id: string, payload: UpdateEvaluationPayload) => Promise<Evaluation>;
+  removeEvaluation: (id: string) => Promise<void>;
+  refreshEvaluations: () => Promise<void>;
   goals: AcademicGoal[];
   addGoal: (goal: Omit<AcademicGoal, 'id' | 'isCompleted'>) => void;
   toggleGoalCompletion: (id: string) => void;
@@ -116,22 +124,6 @@ const INITIAL_SCHEDULE: ScheduleSlot[] = [
   { id: 's15', day: 'Sexta',   time: '08:15 - 09:45', subjectId: 'matematica', subjectName: 'Matemática', room: 'Sala 102' },
   { id: 's16', day: 'Sexta',   time: '10:00 - 11:30', subjectId: 'geografia',  subjectName: 'Geografia',  room: 'Sala 201' },
   { id: 's17', day: 'Sexta',   time: '11:45 - 13:15', subjectId: 'historia',   subjectName: 'História',   room: 'Sala 302' },
-];
-
-const INITIAL_EVALUATIONS: Evaluation[] = [
-  { id: 'e1',  subjectId: 'matematica', subjectName: 'Matemática', type: 'Prova',       date: '2026-06-18', maxValue: 20, gradeObtained: 16.4, notes: 'Prova sobre Limites e Sequências. Excelente nota!' },
-  { id: 'e2',  subjectId: 'matematica', subjectName: 'Matemática', type: 'Trabalho',    date: '2026-06-02', maxValue: 20, gradeObtained: 17.0, notes: 'Apresentação sobre a História do Cálculo Diferencial.' },
-  { id: 'e3',  subjectId: 'matematica', subjectName: 'Matemática', type: 'Exercício',   date: '2026-05-15', maxValue: 20, gradeObtained: 14.0, notes: 'Ficha de consolidação em sala.' },
-  { id: 'e4',  subjectId: 'fisica',     subjectName: 'Física',     type: 'Prova',       date: '2026-06-10', maxValue: 20, gradeObtained: 13.5, notes: 'Teste escrito sobre Dinâmica de Partículas.' },
-  { id: 'e5',  subjectId: 'fisica',     subjectName: 'Física',     type: 'Trabalho',    date: '2026-05-20', maxValue: 20, gradeObtained: 15.0, notes: 'Relatório clínico das experiências com plano inclinado.' },
-  { id: 'e6',  subjectId: 'portugues',  subjectName: 'Português',  type: 'Prova',       date: '2026-06-12', maxValue: 20, gradeObtained: 16.5 },
-  { id: 'e7',  subjectId: 'portugues',  subjectName: 'Português',  type: 'Trabalho',    date: '2026-05-28', maxValue: 20, gradeObtained: 15.5 },
-  { id: 'e8',  subjectId: 'portugues',  subjectName: 'Português',  type: 'Participação',date: '2026-06-05', maxValue: 20, gradeObtained: 16.0 },
-  { id: 'e9',  subjectId: 'quimica',    subjectName: 'Química',    type: 'Prova',       date: '2026-06-15', maxValue: 20, gradeObtained: 17.5 },
-  { id: 'e10', subjectId: 'biologia',   subjectName: 'Biologia',   type: 'Prova',       date: '2026-06-08', maxValue: 20, gradeObtained: 18.0, notes: 'Avaliação sobre respiração celular e sementes.' },
-  { id: 'e11', subjectId: 'geografia',  subjectName: 'Geografia',  type: 'Prova',       date: '2026-05-25', maxValue: 20, gradeObtained: 15.0 },
-  { id: 'e12', subjectId: 'historia',   subjectName: 'História',   type: 'Prova',       date: '2026-06-04', maxValue: 20, gradeObtained: 13.0, notes: 'Primeira guerra mundial e alianças de poder.' },
-  { id: 'e13', subjectId: 'ingles',     subjectName: 'Inglês',     type: 'Prova',       date: '2026-06-11', maxValue: 20, gradeObtained: 18.5 },
 ];
 
 const INITIAL_GOALS: AcademicGoal[] = [
@@ -227,15 +219,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refresh:   refreshContents,
   } = useContents();
 
+  // ── Avaliações — dados reais do Supabase (via hook) ──────────────────────
+  // onMutate: após cada mutação, refreshSubjects actualiza subject_stats
+  // (médias, rendimento e contagens calculados pela VIEW do PostgreSQL)
+  const {
+    evaluations,
+    isLoading: evaluationsLoading,
+    error:     evaluationsError,
+    addEvaluation,
+    editEvaluation,
+    removeEvaluation,
+    refresh:   refreshEvaluations,
+  } = useEvaluations(refreshSubjects);
+
   // ── Dados académicos (mock — com localStorage para persistência local) ────
   const [schedule, setSchedule] = useState<ScheduleSlot[]>(() => {
     const saved = localStorage.getItem('learnix_schedule');
     return saved ? JSON.parse(saved) : INITIAL_SCHEDULE;
-  });
-
-  const [evaluations, setEvaluations] = useState<Evaluation[]>(() => {
-    const saved = localStorage.getItem('learnix_evaluations');
-    return saved ? JSON.parse(saved) : INITIAL_EVALUATIONS;
   });
 
   const [goals, setGoals] = useState<AcademicGoal[]>(() => {
@@ -256,7 +256,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ── Sync mock data para localStorage ─────────────────────────────────────
   useEffect(() => { localStorage.setItem('learnix_schedule',      JSON.stringify(schedule)); },      [schedule]);
-  useEffect(() => { localStorage.setItem('learnix_evaluations',   JSON.stringify(evaluations)); },   [evaluations]);
   useEffect(() => { localStorage.setItem('learnix_goals',         JSON.stringify(goals)); },         [goals]);
   useEffect(() => { localStorage.setItem('learnix_notifications', JSON.stringify(notifications)); }, [notifications]);
 
@@ -284,14 +283,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const removeScheduleSlot = (id: string) => {
     setSchedule((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const addEvaluation = (newEval: Omit<Evaluation, 'id'>) => {
-    const id = `e_${Date.now()}`;
-    const evaluation: Evaluation = { id, ...newEval };
-    setEvaluations((prev) => [evaluation, ...prev]);
-    // Nota: subjects.average e performance são agora calculados pela VIEW subject_stats.
-    // refreshSubjects() será chamado quando o módulo de avaliações for integrado ao Supabase.
   };
 
   const addGoal = (newGoal: Omit<AcademicGoal, 'id' | 'isCompleted'>) => {
@@ -358,12 +349,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         uploadPhoto,
         getSignedPhotoUrl,
         refreshContents,
+        // Avaliações reais (Supabase)
+        evaluations,
+        evaluationsLoading,
+        evaluationsError,
+        addEvaluation,
+        editEvaluation,
+        removeEvaluation,
+        refreshEvaluations,
         // Dados académicos mock
         schedule,
         addScheduleSlot,
         removeScheduleSlot,
-        evaluations,
-        addEvaluation,
         goals,
         addGoal,
         toggleGoalCompletion,
