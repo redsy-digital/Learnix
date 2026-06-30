@@ -92,11 +92,11 @@ export function useDashboard(): DashboardMetrics {
     subjects, subjectsLoading,
     contents, contentsLoading,
     evaluations, evaluationsLoading,
-    schedule,
+    schedule, scheduleLoading,
     user,
   } = useApp();
 
-  const isLoading = subjectsLoading || contentsLoading || evaluationsLoading;
+  const isLoading = subjectsLoading || contentsLoading || evaluationsLoading || scheduleLoading;
 
   // ── Data actual (calculada uma vez por render) ────────────────────────────
   const today       = useMemo(() => new Date(), []);

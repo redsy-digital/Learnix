@@ -37,8 +37,10 @@ import { useAuth } from './AuthContext';
 import { useSubjects } from '../hooks/useSubjects';
 import { useContents } from '../hooks/useContents';
 import { useEvaluations } from '../hooks/useEvaluations';
+import { useSchedule } from '../hooks/useSchedule';
 import type { CreateContentPayload, UpdateContentPayload } from '../services/contentsService';
 import type { CreateEvaluationPayload, UpdateEvaluationPayload } from '../services/evaluationsService';
+import type { CreateScheduleSlotPayload, UpdateScheduleSlotPayload } from '../services/scheduleService';
 
 // ─── Interface do contexto ────────────────────────────────────────────────────
 
@@ -78,9 +80,15 @@ interface AppContextType {
   uploadPhoto:   (file: File) => Promise<string>;
   getSignedPhotoUrl: (photoPath: string) => Promise<string>;
   refreshContents: () => Promise<void>;
+  // Horário escolar — dados reais do Supabase
   schedule: ScheduleSlot[];
-  addScheduleSlot: (slot: Omit<ScheduleSlot, 'id'>) => void;
-  removeScheduleSlot: (id: string) => void;
+  scheduleLoading: boolean;
+  scheduleError: string | null;
+  addScheduleSlot:    (payload: CreateScheduleSlotPayload) => Promise<ScheduleSlot>;
+  editScheduleSlot:   (id: string, payload: UpdateScheduleSlotPayload) => Promise<ScheduleSlot>;
+  removeScheduleSlot: (id: string) => Promise<void>;
+  checkScheduleOverlap: (dayName: string, startTime: string, endTime: string, excludeId?: string) => boolean;
+  refreshSchedule: () => Promise<void>;
   // Avaliações — dados reais do Supabase
   evaluations: Evaluation[];
   evaluationsLoading: boolean;
@@ -105,26 +113,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const INITIAL_SCHEDULE: ScheduleSlot[] = [
-  { id: 's1',  day: 'Segunda', time: '08:15 - 09:45', subjectId: 'matematica', subjectName: 'Matemática', room: 'Sala 102' },
-  { id: 's2',  day: 'Segunda', time: '10:00 - 11:30', subjectId: 'portugues',  subjectName: 'Português',  room: 'Sala 204' },
-  { id: 's3',  day: 'Segunda', time: '11:45 - 13:15', subjectId: 'ingles',     subjectName: 'Inglês',     room: 'Sala C10' },
-  { id: 's4',  day: 'Segunda', time: '14:30 - 16:00', subjectId: 'historia',   subjectName: 'História',   room: 'Sala 302' },
-  { id: 's5',  day: 'Terça',   time: '08:15 - 09:45', subjectId: 'fisica',     subjectName: 'Física',     room: 'Laboratório A' },
-  { id: 's6',  day: 'Terça',   time: '10:00 - 11:30', subjectId: 'quimica',    subjectName: 'Química',    room: 'Laboratório B' },
-  { id: 's7',  day: 'Terça',   time: '11:45 - 13:15', subjectId: 'biologia',   subjectName: 'Biologia',   room: 'Sala de Biologia' },
-  { id: 's8',  day: 'Quarta',  time: '08:15 - 09:45', subjectId: 'matematica', subjectName: 'Matemática', room: 'Sala 102' },
-  { id: 's9',  day: 'Quarta',  time: '10:00 - 11:30', subjectId: 'geografia',  subjectName: 'Geografia',  room: 'Sala 201' },
-  { id: 's10', day: 'Quarta',  time: '11:45 - 13:15', subjectId: 'portugues',  subjectName: 'Português',  room: 'Sala 204' },
-  { id: 's11', day: 'Quarta',  time: '14:30 - 16:00', subjectId: 'frances',    subjectName: 'Francês',    room: 'Sala C12' },
-  { id: 's12', day: 'Quinta',  time: '08:15 - 09:45', subjectId: 'fisica',     subjectName: 'Física',     room: 'Sala 101' },
-  { id: 's13', day: 'Quinta',  time: '10:00 - 11:30', subjectId: 'quimica',    subjectName: 'Química',    room: 'Sala 101' },
-  { id: 's14', day: 'Quinta',  time: '11:45 - 13:15', subjectId: 'biologia',   subjectName: 'Biologia',   room: 'Sala de Biologia' },
-  { id: 's15', day: 'Sexta',   time: '08:15 - 09:45', subjectId: 'matematica', subjectName: 'Matemática', room: 'Sala 102' },
-  { id: 's16', day: 'Sexta',   time: '10:00 - 11:30', subjectId: 'geografia',  subjectName: 'Geografia',  room: 'Sala 201' },
-  { id: 's17', day: 'Sexta',   time: '11:45 - 13:15', subjectId: 'historia',   subjectName: 'História',   room: 'Sala 302' },
-];
 
 const INITIAL_GOALS: AcademicGoal[] = [
   { id: 'g1', title: 'Chegar a média de 16 em Matemática', target: 16, current: 15.8, unit: 'média',         category: 'Notas',       dueDate: '2026-07-15', isCompleted: false },
@@ -232,12 +220,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refresh:   refreshEvaluations,
   } = useEvaluations(refreshSubjects);
 
-  // ── Dados académicos (mock — com localStorage para persistência local) ────
-  const [schedule, setSchedule] = useState<ScheduleSlot[]>(() => {
-    const saved = localStorage.getItem('learnix_schedule');
-    return saved ? JSON.parse(saved) : INITIAL_SCHEDULE;
-  });
+  // ── Horário escolar — dados reais do Supabase (via hook) ─────────────────
+  const {
+    schedule,
+    isLoading: scheduleLoading,
+    error:     scheduleError,
+    addScheduleSlot,
+    editScheduleSlot,
+    removeScheduleSlot,
+    checkOverlap: checkScheduleOverlap,
+    refresh:   refreshSchedule,
+  } = useSchedule();
 
+  // ── Dados académicos (mock — com localStorage para persistência local) ────
   const [goals, setGoals] = useState<AcademicGoal[]>(() => {
     const saved = localStorage.getItem('learnix_goals');
     return saved ? JSON.parse(saved) : INITIAL_GOALS;
@@ -255,7 +250,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [aiQuestions, setAiQuestions] = useState<AIQuestion[]>(DEFAULT_AI_QUESTIONS);
 
   // ── Sync mock data para localStorage ─────────────────────────────────────
-  useEffect(() => { localStorage.setItem('learnix_schedule',      JSON.stringify(schedule)); },      [schedule]);
   useEffect(() => { localStorage.setItem('learnix_goals',         JSON.stringify(goals)); },         [goals]);
   useEffect(() => { localStorage.setItem('learnix_notifications', JSON.stringify(notifications)); }, [notifications]);
 
@@ -275,15 +269,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [themeMode]);
 
   // ── Mutadores académicos (mock restante) ─────────────────────────────────
-
-  const addScheduleSlot = (newSlot: Omit<ScheduleSlot, 'id'>) => {
-    const id = `s_${Date.now()}`;
-    setSchedule((prev) => [...prev, { id, ...newSlot }]);
-  };
-
-  const removeScheduleSlot = (id: string) => {
-    setSchedule((prev) => prev.filter((s) => s.id !== id));
-  };
 
   const addGoal = (newGoal: Omit<AcademicGoal, 'id' | 'isCompleted'>) => {
     const id = `g_${Date.now()}`;
@@ -357,10 +342,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         editEvaluation,
         removeEvaluation,
         refreshEvaluations,
-        // Dados académicos mock
+        // Horário reais (Supabase)
         schedule,
+        scheduleLoading,
+        scheduleError,
         addScheduleSlot,
+        editScheduleSlot,
         removeScheduleSlot,
+        checkScheduleOverlap,
+        refreshSchedule,
+        // Dados académicos mock
         goals,
         addGoal,
         toggleGoalCompletion,
