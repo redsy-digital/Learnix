@@ -19,7 +19,7 @@ import { Link } from 'react-router-dom';
 import {
   Flame, Award, AlertCircle, TrendingUp, FileText,
   Calendar, Sparkles, ChevronRight, PlusCircle,
-  BookOpen, Loader2, BookMarked, ClipboardCheck,
+  BookOpen, Loader2, BookMarked, ClipboardCheck, Target,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar,
@@ -65,6 +65,7 @@ export const Dashboard: React.FC = () => {
     bestSubject, worstSubject,
     recentContents, recentEvaluations,
     chartData, todaySchedule,
+    activeGoalsCount, avgGoalProgress,
     isLoading, hasData,
   } = useDashboard();
 
@@ -473,6 +474,66 @@ export const Dashboard: React.FC = () => {
                 })
               )}
             </div>
+          </div>
+
+          {/* Metas em progresso */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-display font-bold text-base text-slate-800">Metas em Progresso</h3>
+                <p className="text-xs text-slate-400">Acompanha os teus objectivos académicos</p>
+              </div>
+              <Link to="/metas" className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:underline">
+                Ver todas
+              </Link>
+            </div>
+
+            {isLoading ? (
+              <div className="space-y-3">
+                {[1, 2].map(i => (
+                  <div key={i} className="p-3 rounded-xl bg-slate-50 animate-pulse space-y-2">
+                    <div className="h-3 w-32 bg-slate-200 rounded" />
+                    <div className="h-1.5 w-full bg-slate-200 rounded-full" />
+                  </div>
+                ))}
+              </div>
+            ) : activeGoalsCount === 0 ? (
+              <div className="py-6 text-center space-y-2">
+                <Target size={24} className="mx-auto text-slate-300" />
+                <p className="text-xs text-slate-400 font-semibold">Nenhuma meta activa.</p>
+                <Link
+                  to="/metas"
+                  className="inline-flex items-center space-x-1 text-xs font-bold text-blue-600 hover:text-blue-700"
+                >
+                  <PlusCircle size={12} /><span>Criar primeira meta</span>
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-600">
+                    {activeGoalsCount} meta{activeGoalsCount !== 1 ? 's' : ''} activa{activeGoalsCount !== 1 ? 's' : ''}
+                  </span>
+                  <span className="font-black text-blue-600">{avgGoalProgress}% médio</span>
+                </div>
+                <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${
+                      avgGoalProgress >= 80 ? 'bg-emerald-500' :
+                      avgGoalProgress >= 50 ? 'bg-blue-500' : 'bg-amber-500'
+                    }`}
+                    style={{ width: `${avgGoalProgress}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  {avgGoalProgress >= 80
+                    ? '🎯 Excelente progresso! Quase lá.'
+                    : avgGoalProgress >= 50
+                    ? '📈 Bom ritmo. Continua assim!'
+                    : '💪 Ainda há caminho. Não desistas!'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Banner de streak */}

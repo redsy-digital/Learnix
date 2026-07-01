@@ -51,6 +51,10 @@ export interface DashboardMetrics {
   // Horário de hoje
   todaySchedule: ReturnType<typeof useApp>['schedule'];
 
+  // Metas
+  activeGoalsCount: number;
+  avgGoalProgress: number;  // 0-100
+
   // Estados de loading
   isLoading: boolean;
   hasData: boolean;
@@ -93,10 +97,11 @@ export function useDashboard(): DashboardMetrics {
     contents, contentsLoading,
     evaluations, evaluationsLoading,
     schedule, scheduleLoading,
+    goals, goalsLoading,
     user,
   } = useApp();
 
-  const isLoading = subjectsLoading || contentsLoading || evaluationsLoading || scheduleLoading;
+  const isLoading = subjectsLoading || contentsLoading || evaluationsLoading || scheduleLoading || goalsLoading;
 
   // ── Data actual (calculada uma vez por render) ────────────────────────────
   const today       = useMemo(() => new Date(), []);
@@ -161,6 +166,17 @@ export function useDashboard(): DashboardMetrics {
   // ── hasData: tem pelo menos disciplinas carregadas ────────────────────────
   const hasData = !isLoading && subjects.length > 0;
 
+  // ── Métricas de metas ─────────────────────────────────────────────────────
+  const activeGoals    = useMemo(() => goals.filter(g => !g.isCompleted), [goals]);
+  const activeGoalsCount = activeGoals.length;
+  const avgGoalProgress = useMemo(() => {
+    if (activeGoals.length === 0) return 0;
+    const sum = activeGoals.reduce(
+      (acc, g) => acc + Math.min((g.current / g.target) * 100, 100), 0
+    );
+    return Math.round(sum / activeGoals.length);
+  }, [activeGoals]);
+
   return {
     greeting,
     userName:          profile?.name || user.name || 'Estudante',
@@ -178,6 +194,8 @@ export function useDashboard(): DashboardMetrics {
     recentEvaluations,
     chartData,
     todaySchedule,
+    activeGoalsCount,
+    avgGoalProgress,
     isLoading,
     hasData,
   };

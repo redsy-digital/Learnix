@@ -38,9 +38,11 @@ import { useSubjects } from '../hooks/useSubjects';
 import { useContents } from '../hooks/useContents';
 import { useEvaluations } from '../hooks/useEvaluations';
 import { useSchedule } from '../hooks/useSchedule';
+import { useGoals } from '../hooks/useGoals';
 import type { CreateContentPayload, UpdateContentPayload } from '../services/contentsService';
 import type { CreateEvaluationPayload, UpdateEvaluationPayload } from '../services/evaluationsService';
 import type { CreateScheduleSlotPayload, UpdateScheduleSlotPayload } from '../services/scheduleService';
+import type { CreateGoalPayload, UpdateGoalPayload, AutoProgressContext } from '../services/goalsService';
 
 // ─── Interface do contexto ────────────────────────────────────────────────────
 
@@ -97,9 +99,17 @@ interface AppContextType {
   editEvaluation:   (id: string, payload: UpdateEvaluationPayload) => Promise<Evaluation>;
   removeEvaluation: (id: string) => Promise<void>;
   refreshEvaluations: () => Promise<void>;
+  // Metas — dados reais do Supabase
   goals: AcademicGoal[];
-  addGoal: (goal: Omit<AcademicGoal, 'id' | 'isCompleted'>) => void;
-  toggleGoalCompletion: (id: string) => void;
+  goalsLoading: boolean;
+  goalsError: string | null;
+  addGoal:          (payload: CreateGoalPayload) => Promise<AcademicGoal>;
+  editGoal:         (id: string, payload: UpdateGoalPayload) => Promise<AcademicGoal>;
+  removeGoal:       (id: string) => Promise<void>;
+  toggleGoalCompletion: (id: string, isCurrentlyCompleted: boolean) => Promise<void>;
+  setGoalProgress:  (id: string, current: number) => Promise<void>;
+  syncGoalProgress: (ctx: AutoProgressContext) => Promise<void>;
+  refreshGoals:     () => Promise<void>;
   notifications: AppNotification[];
   markNotificationAsRead: (id: string) => void;
   markAllNotificationsAsRead: () => void;
@@ -113,13 +123,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const INITIAL_GOALS: AcademicGoal[] = [
-  { id: 'g1', title: 'Chegar a média de 16 em Matemática', target: 16, current: 15.8, unit: 'média',         category: 'Notas',       dueDate: '2026-07-15', isCompleted: false },
-  { id: 'g2', title: 'Estudar Química 4 vezes por semana', target: 4,  current: 3,    unit: 'vezes/semana',  category: 'Estudo',      dueDate: '2026-06-30', isCompleted: false },
-  { id: 'g3', title: 'Resolver 100 exercícios este mês',   target: 100,current: 78,   unit: 'exercícios',    category: 'Atividades',  dueDate: '2026-06-30', isCompleted: false },
-  { id: 'g4', title: 'Completar o resumo de História de hoje', target: 1, current: 1, unit: 'resumo',        category: 'Estudo',      dueDate: '2026-06-22', isCompleted: true },
-];
 
 const INITIAL_NOTIFICATIONS: AppNotification[] = [
   { id: 'n1', title: 'Conteúdo do dia pendente',    description: 'Você ainda não registrou nenhum aprendizado hoje. Não perca a sequência diária!', time: 'Há 2 horas', type: 'warning', read: false },
@@ -232,12 +235,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refresh:   refreshSchedule,
   } = useSchedule();
 
-  // ── Dados académicos (mock — com localStorage para persistência local) ────
-  const [goals, setGoals] = useState<AcademicGoal[]>(() => {
-    const saved = localStorage.getItem('learnix_goals');
-    return saved ? JSON.parse(saved) : INITIAL_GOALS;
-  });
+  // ── Metas — dados reais do Supabase (via hook) ───────────────────────────
+  const {
+    goals,
+    isLoading: goalsLoading,
+    error:     goalsError,
+    addGoal,
+    editGoal,
+    removeGoal,
+    completeGoal:     toggleGoalCompletion,
+    setGoalProgress,
+    syncAutoProgress: syncGoalProgress,
+    refresh:          refreshGoals,
+  } = useGoals();
 
+  // ── Dados académicos (mock — com localStorage para persistência local) ────
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     const saved = localStorage.getItem('learnix_notifications');
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
@@ -250,7 +262,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [aiQuestions, setAiQuestions] = useState<AIQuestion[]>(DEFAULT_AI_QUESTIONS);
 
   // ── Sync mock data para localStorage ─────────────────────────────────────
-  useEffect(() => { localStorage.setItem('learnix_goals',         JSON.stringify(goals)); },         [goals]);
   useEffect(() => { localStorage.setItem('learnix_notifications', JSON.stringify(notifications)); }, [notifications]);
 
   // ── Tema: sincronizar com o perfil real quando carrega ───────────────────
@@ -268,20 +279,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (profile) updateProfile({ theme_mode: themeMode }).catch(() => {});
   }, [themeMode]);
 
-  // ── Mutadores académicos (mock restante) ─────────────────────────────────
-
-  const addGoal = (newGoal: Omit<AcademicGoal, 'id' | 'isCompleted'>) => {
-    const id = `g_${Date.now()}`;
-    setGoals((prev) => [{ id, ...newGoal, isCompleted: false }, ...prev]);
-  };
-
-  const toggleGoalCompletion = (id: string) => {
-    setGoals((prev) => prev.map((g) => {
-      if (g.id !== id) return g;
-      const isCompleted = !g.isCompleted;
-      return { ...g, isCompleted, current: isCompleted ? g.target : 0 };
-    }));
-  };
+  // ── Mutadores (mock restante — notificações, IA) ──────────────────────────
 
   const markNotificationAsRead = (id: string) => {
     setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
@@ -351,10 +349,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         removeScheduleSlot,
         checkScheduleOverlap,
         refreshSchedule,
-        // Dados académicos mock
+        // Metas reais (Supabase)
         goals,
+        goalsLoading,
+        goalsError,
         addGoal,
+        editGoal,
+        removeGoal,
         toggleGoalCompletion,
+        setGoalProgress,
+        syncGoalProgress,
+        refreshGoals,
+        // Dados mock (notificações, IA)
         notifications,
         markNotificationAsRead,
         markAllNotificationsAsRead,
