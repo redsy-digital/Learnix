@@ -39,6 +39,7 @@ import { useContents } from '../hooks/useContents';
 import { useEvaluations } from '../hooks/useEvaluations';
 import { useSchedule } from '../hooks/useSchedule';
 import { useGoals } from '../hooks/useGoals';
+import { useNotifications } from '../hooks/useNotifications';
 import type { CreateContentPayload, UpdateContentPayload } from '../services/contentsService';
 import type { CreateEvaluationPayload, UpdateEvaluationPayload } from '../services/evaluationsService';
 import type { CreateScheduleSlotPayload, UpdateScheduleSlotPayload } from '../services/scheduleService';
@@ -110,9 +111,15 @@ interface AppContextType {
   setGoalProgress:  (id: string, current: number) => Promise<void>;
   syncGoalProgress: (ctx: AutoProgressContext) => Promise<void>;
   refreshGoals:     () => Promise<void>;
+  // Notificações — dados reais do Supabase
   notifications: AppNotification[];
-  markNotificationAsRead: (id: string) => void;
-  markAllNotificationsAsRead: () => void;
+  notificationsLoading: boolean;
+  unreadCount: number;
+  markNotificationAsRead:    (id: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
+  removeNotification:        (id: string) => Promise<void>;
+  removeAllReadNotifications: () => Promise<void>;
+  refreshNotifications:      () => Promise<void>;
   aiQuestions: AIQuestion[];
   generateAIQuestions: (subjectId: string, type?: string) => void;
   submitAIAnswer: (questionId: string, answer: string) => void;
@@ -123,13 +130,6 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const INITIAL_NOTIFICATIONS: AppNotification[] = [
-  { id: 'n1', title: 'Conteúdo do dia pendente',    description: 'Você ainda não registrou nenhum aprendizado hoje. Não perca a sequência diária!', time: 'Há 2 horas', type: 'warning', read: false },
-  { id: 'n2', title: 'Meta semanal quase lá!',      description: 'Estudar Química está com 75% de progresso concluído. Falta apenas mais 1 sessão!', time: 'Há 5 horas', type: 'success', read: false },
-  { id: 'n3', title: 'História precisa de atenção', description: 'Sua média em História está em 13.9, ligeiramente abaixo da sua meta pessoal de 14.5.', time: 'Ontem', type: 'info', read: false },
-  { id: 'n4', title: 'Novo simulado de Biologia',   description: 'A IA gerou um novo miniteste de mitose personalizado baseado nos teus pontos fracos.', time: 'Há 2 dias', type: 'alert', read: true },
-];
 
 const MOCK_AI_DATABASE: Record<string, AIQuestion[]> = {
   matematica: [
@@ -249,10 +249,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refresh:          refreshGoals,
   } = useGoals();
 
-  // ── Dados académicos (mock — com localStorage para persistência local) ────
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('learnix_notifications');
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
+  // ── Notificações — dados reais do Supabase (via hook) ────────────────────
+  // O hook recebe o contexto de dados para gerar notificações automáticas
+  const {
+    notifications,
+    unreadCount,
+    isLoading: notificationsLoading,
+    markRead:       markNotificationAsRead,
+    markAllRead:    markAllNotificationsAsRead,
+    removeNotification,
+    removeAllRead:  removeAllReadNotifications,
+    refresh:        refreshNotifications,
+  } = useNotifications({
+    subjects, contents, schedule, goals, evaluations,
   });
 
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(
@@ -260,9 +269,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   );
 
   const [aiQuestions, setAiQuestions] = useState<AIQuestion[]>(DEFAULT_AI_QUESTIONS);
-
-  // ── Sync mock data para localStorage ─────────────────────────────────────
-  useEffect(() => { localStorage.setItem('learnix_notifications', JSON.stringify(notifications)); }, [notifications]);
 
   // ── Tema: sincronizar com o perfil real quando carrega ───────────────────
   useEffect(() => {
@@ -279,15 +285,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (profile) updateProfile({ theme_mode: themeMode }).catch(() => {});
   }, [themeMode]);
 
-  // ── Mutadores (mock restante — notificações, IA) ──────────────────────────
-
-  const markNotificationAsRead = (id: string) => {
-    setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true } : n));
-  };
-
-  const markAllNotificationsAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  };
+  // ── Mutadores (mock restante — IA) ────────────────────────────────────────
 
   const generateAIQuestions = (subjectId: string, _type?: string) => {
     const pool = MOCK_AI_DATABASE[subjectId] || DEFAULT_AI_QUESTIONS;
@@ -360,10 +358,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setGoalProgress,
         syncGoalProgress,
         refreshGoals,
-        // Dados mock (notificações, IA)
+        // Notificações reais (Supabase)
         notifications,
+        notificationsLoading,
+        unreadCount,
         markNotificationAsRead,
         markAllNotificationsAsRead,
+        removeNotification,
+        removeAllReadNotifications,
+        refreshNotifications,
+        // IA (mock)
         aiQuestions,
         generateAIQuestions,
         submitAIAnswer,

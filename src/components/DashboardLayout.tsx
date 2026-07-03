@@ -32,7 +32,7 @@ interface SidebarItem {
 }
 
 export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user, notifications, logout, themeMode, setThemeMode } = useApp();
+  const { user, notifications, unreadCount, logout, themeMode, setThemeMode } = useApp();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -48,8 +48,6 @@ export const DashboardLayout: React.FC<{ children: React.ReactNode }> = ({ child
     { name: 'Estatísticas', path: '/estatisticas', icon: BarChart3 },
     { name: 'Metas', path: '/metas', icon: Target },
   ];
-
-  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const handleLogout = () => {
     logout();
