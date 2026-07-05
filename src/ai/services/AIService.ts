@@ -5,20 +5,12 @@
  * poderá importar GeminiProvider, MockProvider ou qualquer prompt/parser
  * directamente. Toda a comunicação com IA passa por esta classe.
  *
- * Responsabilidades:
- *  - Seleccionar o provider activo (Mock em dev, Gemini em prod)
- *  - Construir prompts via prompt builders
- *  - Enviar ao provider e receber resposta crua
- *  - Fazer parse e validar via parsers/validators
- *  - Empacotar no envelope AIResponse<T> uniforme
- *  - Nunca deixar erros não controlados chegar ao frontend
+ * ESTADO ACTUAL (Etapa 11):
+ *  - analyzeContent()  → GeminiProvider (REAL — via Edge Function)
+ *  - todas as outras   → MockProvider (a activar progressivamente)
  *
- * Fluxo de dados:
- *   AIService.generateExercises(params)
- *     → buildGenerateExercisesPrompt(params)  [prompt builder]
- *     → provider.complete(system, user)        [GeminiProvider ou MockProvider]
- *     → parseExercise(rawText)                 [parser + validator]
- *     → AIResponse<Exercise>                   [envelope uniforme]
+ * A troca entre providers é totalmente transparente para o resto da aplicação.
+ * Os callers apenas usam AIService.método() e recebem AIResponse<T>.
  */
 
 import type { AIProvider } from '../providers/AIProvider';
@@ -32,12 +24,12 @@ import type {
 } from '../types/ai';
 
 // Prompt builders
-import { buildAnalyzeContentPrompt }    from '../prompts/analyzeContent';
-import { buildGenerateExercisesPrompt } from '../prompts/generateExercises';
-import { buildGenerateSummaryPrompt }   from '../prompts/generateSummary';
+import { buildAnalyzeContentPrompt }     from '../prompts/analyzeContent';
+import { buildGenerateExercisesPrompt }  from '../prompts/generateExercises';
+import { buildGenerateSummaryPrompt }    from '../prompts/generateSummary';
 import { buildGenerateFlashcardsPrompt } from '../prompts/generateFlashcards';
-import { buildGenerateMockExamPrompt }  from '../prompts/generateMockExam';
-import { buildExplainAnswerPrompt }     from '../prompts/explainAnswer';
+import { buildGenerateMockExamPrompt }   from '../prompts/generateMockExam';
+import { buildExplainAnswerPrompt }      from '../prompts/explainAnswer';
 
 // Parsers
 import {
@@ -49,55 +41,52 @@ import {
   parseAnswerExplanation,
 } from '../parsers';
 
-// ─── Factory e configuração ───────────────────────────────────────────────────
+// Providers
+import { GeminiProvider } from '../providers/GeminiProvider';
+import { MockProvider }   from '../providers/MockProvider';
 
-/**
- * Cria o AIService com o provider especificado.
- * Em desenvolvimento: MockProvider (sem API, sem quota).
- * Em produção: GeminiProvider (via Edge Function).
- *
- * Uso no projecto:
- *   import { aiService } from '../ai/services/AIService';
- *   const result = await aiService.generateExercises(params);
- */
+// ─── AIService class ──────────────────────────────────────────────────────────
+
 class AIServiceClass {
-  private provider: AIProvider;
-
-  constructor(provider: AIProvider) {
-    this.provider = provider;
-  }
+  /**
+   * Provider principal — usado para analyzeContent (real).
+   * Actualmente: GeminiProvider via Edge Function.
+   */
+  private primaryProvider: AIProvider;
 
   /**
-   * Permite trocar o provider em runtime.
-   * Útil para:
-   *  - Testes que precisam de MockProvider
-   *  - Feature flags (fallback para Mock se Gemini falhar)
-   *  - Futura adição de outros modelos (OpenAI, Claude, etc.)
+   * Provider de fallback — usado para funcionalidades ainda não integradas.
+   * Actualmente: MockProvider para exercícios, resumos, flashcards, simulados.
    */
-  setProvider(provider: AIProvider): void {
-    this.provider = provider;
+  private mockProvider: AIProvider;
+
+  constructor(primary: AIProvider, mock: AIProvider) {
+    this.primaryProvider = primary;
+    this.mockProvider    = mock;
+  }
+
+  /** Troca o provider principal (Gemini ↔ outro modelo) */
+  setPrimaryProvider(provider: AIProvider): void {
+    this.primaryProvider = provider;
   }
 
   get providerName(): AIProviderName {
-    return this.provider.name;
+    return this.primaryProvider.name;
   }
 
   // ─── Método interno de execução ─────────────────────────────────────────────
 
-  /**
-   * Executa uma operação de IA com tratamento uniforme de erros.
-   * Todas as operações públicas delegam aqui.
-   */
   private async execute<T>(
-    featureName: string,
+    featureName:  string,
+    provider:     AIProvider,
     systemPrompt: string,
-    userPrompt: string,
-    parse: (rawText: string) => T,
+    userPrompt:   string,
+    parse:        (rawText: string) => T,
   ): Promise<AIResponse<T>> {
     const startTime = Date.now();
 
     try {
-      const raw = await this.provider.complete(systemPrompt, userPrompt, {
+      const raw = await provider.complete(systemPrompt, userPrompt, {
         temperature: 0.7,
         maxTokens:   2048,
         timeoutMs:   30_000,
@@ -108,19 +97,20 @@ class AIServiceClass {
       return {
         success:    true,
         data,
-        provider:   this.provider.name,
+        provider:   provider.name,
         model:      raw.model,
         latencyMs:  raw.latencyMs,
         tokensUsed: raw.tokensUsed,
       };
+
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro desconhecido';
-      console.error(`[AIService] ${featureName} falhou:`, message);
+      console.error(`[AIService] ${featureName} falhou (${provider.name}):`, message);
 
       return {
-        success:  false,
-        error:    this.translateError(message),
-        provider: this.provider.name,
+        success:   false,
+        error:     this.translateError(message),
+        provider:  provider.name,
         latencyMs: Date.now() - startTime,
       };
     }
@@ -129,9 +119,9 @@ class AIServiceClass {
   // ─── Operações públicas ──────────────────────────────────────────────────────
 
   /**
-   * Analisa um conteúdo académico e devolve uma análise estruturada.
-   * Este é o ponto de entrada do fluxo principal:
-   *   conteúdo → análise → [exercícios | resumo | flashcards | simulado]
+   * analyzeContent — usa GeminiProvider REAL.
+   * Primeiro método integrado com a API real na Etapa 11.
+   * Analisa conteúdo académico e devolve ContentAnalysis estruturada.
    */
   async analyzeContent(
     params: AnalyzeContentParams
@@ -139,6 +129,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildAnalyzeContentPrompt(params);
     return this.execute(
       'analyzeContent',
+      this.primaryProvider,   // ← GeminiProvider real
       systemPrompt,
       userPrompt,
       parseContentAnalysis,
@@ -146,9 +137,7 @@ class AIServiceClass {
   }
 
   /**
-   * Gera exercícios personalizados para um conteúdo.
-   * Pode reutilizar uma ContentAnalysis prévia (params.analysis)
-   * para evitar re-analisar o mesmo conteúdo.
+   * generateExercises — MockProvider (activar Gemini na próxima etapa)
    */
   async generateExercises(
     params: GenerateExercisesParams
@@ -156,6 +145,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildGenerateExercisesPrompt(params);
     return this.execute(
       'generateExercises',
+      this.mockProvider,      // ← Mock até Etapa 12
       systemPrompt,
       userPrompt,
       parseExercise,
@@ -163,8 +153,7 @@ class AIServiceClass {
   }
 
   /**
-   * Gera um resumo académico estruturado.
-   * Pode reutilizar análise prévia para maior relevância.
+   * generateSummary — MockProvider (activar Gemini em etapa futura)
    */
   async generateSummary(
     params: GenerateSummaryParams
@@ -172,6 +161,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildGenerateSummaryPrompt(params);
     return this.execute(
       'generateSummary',
+      this.mockProvider,
       systemPrompt,
       userPrompt,
       parseSummary,
@@ -179,8 +169,7 @@ class AIServiceClass {
   }
 
   /**
-   * Gera um deck de flashcards para memorização espaçada.
-   * Pode reutilizar análise prévia.
+   * generateFlashcards — MockProvider (activar Gemini em etapa futura)
    */
   async generateFlashcards(
     params: GenerateFlashcardsParams
@@ -188,6 +177,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildGenerateFlashcardsPrompt(params);
     return this.execute(
       'generateFlashcards',
+      this.mockProvider,
       systemPrompt,
       userPrompt,
       parseFlashcardDeck,
@@ -195,7 +185,7 @@ class AIServiceClass {
   }
 
   /**
-   * Gera um simulado completo com múltiplas disciplinas.
+   * generateMockExam — MockProvider (activar Gemini em etapa futura)
    */
   async generateMockExam(
     params: GenerateMockExamParams
@@ -203,6 +193,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildGenerateMockExamPrompt(params);
     return this.execute(
       'generateMockExam',
+      this.mockProvider,
       systemPrompt,
       userPrompt,
       parseMockExam,
@@ -210,7 +201,7 @@ class AIServiceClass {
   }
 
   /**
-   * Explica pedagogicamente a resposta de um aluno a uma questão.
+   * explainAnswer — MockProvider (activar Gemini em etapa futura)
    */
   async explainAnswer(
     params: ExplainAnswerParams
@@ -218,6 +209,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildExplainAnswerPrompt(params);
     return this.execute(
       'explainAnswer',
+      this.mockProvider,
       systemPrompt,
       userPrompt,
       parseAnswerExplanation,
@@ -225,8 +217,7 @@ class AIServiceClass {
   }
 
   /**
-   * Fluxo completo: analisa o conteúdo e gera exercícios a partir da análise.
-   * Demonstra a reutilização da análise como base para outras funcionalidades.
+   * Fluxo completo: analisa (Gemini real) + gera exercícios (Mock por agora)
    */
   async analyzeAndGenerateExercises(
     params: Omit<GenerateExercisesParams, 'analysis'>
@@ -234,67 +225,57 @@ class AIServiceClass {
     analysis:  AIResponse<ContentAnalysis>;
     exercises: AIResponse<Exercise>;
   }> {
-    // 1. Analisar o conteúdo
-    const analysis = await this.analyzeContent({
-      content: params.content,
-      context: params.context,
-    });
-
-    // 2. Gerar exercícios com base na análise (se bem-sucedida)
+    const analysis  = await this.analyzeContent({ content: params.content, context: params.context });
     const exercises = await this.generateExercises({
       ...params,
       analysis: analysis.success ? analysis.data : undefined,
     });
-
     return { analysis, exercises };
   }
 
-  // ─── Verificação de disponibilidade ─────────────────────────────────────────
-
+  /** Verifica se o provider principal está disponível */
   async isAvailable(): Promise<boolean> {
-    return this.provider.isAvailable();
+    return this.primaryProvider.isAvailable();
   }
 
-  // ─── Tradução de erros para o utilizador ─────────────────────────────────────
+  // ─── Tradução de erros ────────────────────────────────────────────────────────
 
   private translateError(msg: string): string {
     const m = msg.toLowerCase();
-    if (m.includes('not ready') || m.includes('edge function')) {
-      return 'A integração com IA ainda não está configurada. Esta funcionalidade estará disponível em breve.';
+    if (m.includes('sessão') || m.includes('inicia sessão') || m.includes('auth')) {
+      return 'A tua sessão expirou. Inicia sessão novamente e tenta outra vez.';
     }
-    if (m.includes('timeout')) {
+    if (m.includes('quota') || m.includes('limite')) {
+      return 'Limite de IA atingido. Aguarda alguns minutos e tenta novamente.';
+    }
+    if (m.includes('timeout') || m.includes('demorou')) {
       return 'A IA demorou demasiado a responder. Tenta novamente.';
     }
-    if (m.includes('network') || m.includes('fetch')) {
+    if (m.includes('network') || m.includes('fetch') || m.includes('internet')) {
       return 'Sem ligação. Verifica a tua internet e tenta novamente.';
     }
-    if (m.includes('parse') || m.includes('json')) {
+    if (m.includes('parse') || m.includes('json') || m.includes('campo inválido')) {
       return 'A IA devolveu uma resposta inesperada. Tenta novamente.';
     }
-    if (m.includes('validation') || m.includes('campo inválido')) {
-      return 'A resposta da IA não continha todos os campos necessários. Tenta novamente.';
+    if (m.includes('not ready') || m.includes('edge function') || m.includes('indisponível')) {
+      return 'O serviço de IA está temporariamente indisponível. Tenta mais tarde.';
     }
     return 'Ocorreu um erro ao processar a resposta da IA. Tenta novamente.';
   }
 }
 
-// ─── Instância singleton ──────────────────────────────────────────────────────
+// ─── Singleton ────────────────────────────────────────────────────────────────
 
 /**
  * Instância singleton do AIService.
  *
- * CONFIGURAÇÃO:
- *  - Desenvolvimento: MockProvider (sem API key, sem quota)
- *  - Produção: substituir por GeminiProvider na próxima etapa
- *
- * Para trocar de provider:
- *   import { aiService } from '../ai/services/AIService';
- *   import { GeminiProvider } from '../ai/providers/GeminiProvider';
- *   aiService.setProvider(new GeminiProvider({ edgeFunctionUrl: '...' }));
+ * primaryProvider = GeminiProvider (analyzeContent real via Edge Function)
+ * mockProvider    = MockProvider   (todas as outras funcionalidades por agora)
  */
-import { MockProvider } from '../providers/MockProvider';
-
-export const aiService = new AIServiceClass(new MockProvider());
+export const aiService = new AIServiceClass(
+  new GeminiProvider(),   // real — via Edge Function + Supabase Secrets
+  new MockProvider(),     // mock — para funcionalidades não integradas ainda
+);
 
 export { AIServiceClass };
 export type { AIProvider };

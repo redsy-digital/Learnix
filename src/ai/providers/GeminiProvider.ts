@@ -2,21 +2,27 @@
  * GeminiProvider.ts — Fornecedor Google Gemini via Supabase Edge Function
  *
  * ARQUITECTURA DE SEGURANÇA:
- * A chave GEMINI_API_KEY NUNCA está no frontend.
- * Esta classe comunica com uma Supabase Edge Function que faz a chamada real.
- * A Edge Function tem acesso ao secret GEMINI_API_KEY via Supabase Secrets.
+ *  - A GEMINI_API_KEY NUNCA está no frontend
+ *  - Toda a comunicação passa pela Edge Function ai-complete
+ *  - O JWT do utilizador autenticado é enviado em cada pedido
+ *  - A Edge Function valida o JWT antes de chamar a Gemini API
  *
  * Fluxo:
- *   Frontend → GeminiProvider → Supabase Edge Function → Gemini API
- *
- * ESTADO ACTUAL: Edge Function ainda não implementada (etapa futura).
- * Ao chamar complete(), lança AIProviderNotReadyError controlado.
+ *   GeminiProvider.complete()
+ *     → GET supabase.auth.getSession()   (JWT do utilizador)
+ *     → POST /functions/v1/ai-complete   (com Authorization: Bearer <jwt>)
+ *       → Edge Function valida JWT
+ *       → Edge Function obtém GEMINI_API_KEY dos Secrets
+ *       → Edge Function chama Gemini API
+ *       → Devolve { text, model, tokensUsed }
+ *     → RawProviderResponse
  */
 
 import type { AIProvider, AICallOptions, RawProviderResponse } from './AIProvider';
 import type { AIProviderName } from '../types/ai';
+import { supabase } from '../../lib/supabase';
 
-// ─── Errors controlados ───────────────────────────────────────────────────────
+// ─── Erros controlados ────────────────────────────────────────────────────────
 
 export class AIProviderNotReadyError extends Error {
   constructor(provider: string, reason: string) {
@@ -39,45 +45,63 @@ export class AIProviderTimeoutError extends Error {
   }
 }
 
+export class AIProviderAuthError extends Error {
+  constructor(provider: string) {
+    super(`[${provider}] Sessão expirada ou inválida. Inicia sessão novamente.`);
+    this.name = 'AIProviderAuthError';
+  }
+}
+
+export class AIProviderQuotaError extends Error {
+  constructor(provider: string) {
+    super(`[${provider}] Limite de IA atingido. Tenta novamente em alguns minutos.`);
+    this.name = 'AIProviderQuotaError';
+  }
+}
+
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
-interface GeminiProviderConfig {
+export interface GeminiProviderConfig {
   /**
-   * URL da Supabase Edge Function que faz a chamada ao Gemini.
-   * Formato: https://<project-ref>.supabase.co/functions/v1/ai-complete
-   * Quando não definido, o provider fica no modo "not-ready".
+   * URL da Supabase Edge Function.
+   * Se não definido, usa a URL do projecto Learnix automaticamente.
    */
   edgeFunctionUrl?: string;
 
-  /**
-   * Modelo Gemini a utilizar (passado à Edge Function).
-   * Default: 'gemini-1.5-flash' (rápido e económico para exercícios e resumos)
-   */
+  /** Modelo Gemini a utilizar (default: gemini-1.5-flash) */
   model?: string;
 }
+
+// URL da Edge Function do projecto Learnix
+const LEARNIX_EDGE_FUNCTION_URL =
+  'https://suxrvjkffmthnniyzbeh.supabase.co/functions/v1/ai-complete';
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class GeminiProvider implements AIProvider {
   readonly name: AIProviderName = 'gemini';
 
-  private readonly edgeFunctionUrl: string | null;
+  private readonly edgeFunctionUrl: string;
   private readonly model: string;
 
   constructor(config: GeminiProviderConfig = {}) {
-    this.edgeFunctionUrl = config.edgeFunctionUrl ?? null;
-    this.model           = config.model ?? 'gemini-1.5-flash';
+    this.edgeFunctionUrl = config.edgeFunctionUrl ?? LEARNIX_EDGE_FUNCTION_URL;
+    this.model           = config.model           ?? 'gemini-1.5-flash';
   }
 
   async isAvailable(): Promise<boolean> {
-    if (!this.edgeFunctionUrl) return false;
     try {
-      // Health-check leve à Edge Function
-      const res = await fetch(`${this.edgeFunctionUrl}/health`, {
-        method:  'GET',
-        headers: { 'Content-Type': 'application/json' },
+      // Verificar sessão do utilizador
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return false;
+
+      // Testar conectividade com a Edge Function via OPTIONS (CORS preflight)
+      const res = await fetch(this.edgeFunctionUrl, {
+        method:  'OPTIONS',
+        headers: { 'Origin': window.location.origin },
+        signal:  AbortSignal.timeout(5000),
       });
-      return res.ok;
+      return res.status < 500;
     } catch {
       return false;
     }
@@ -88,44 +112,36 @@ export class GeminiProvider implements AIProvider {
     userPrompt:   string,
     options:      AICallOptions = {}
   ): Promise<RawProviderResponse> {
-    // Edge Function ainda não implementada
-    if (!this.edgeFunctionUrl) {
-      throw new AIProviderNotReadyError(
-        this.name,
-        'A Supabase Edge Function ainda não foi configurada. ' +
-        'Esta integração será implementada na próxima etapa de desenvolvimento.'
-      );
-    }
-
     const startTime = Date.now();
     const timeoutMs = options.timeoutMs ?? 30_000;
 
-    // AbortController para timeout
+    // ── 1. Obter JWT do utilizador autenticado ────────────────────────────────
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session?.access_token) {
+      throw new AIProviderAuthError(this.name);
+    }
+
+    // ── 2. Preparar payload para a Edge Function ──────────────────────────────
+    const payload = {
+      systemPrompt,
+      userPrompt,
+      model:       this.model,
+      temperature: options.temperature ?? 0.7,
+      maxTokens:   options.maxTokens   ?? 2048,
+    };
+
+    // ── 3. Chamar a Edge Function com timeout ─────────────────────────────────
     const controller = new AbortController();
     const timeoutId  = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      /**
-       * Payload enviado à Edge Function.
-       * A Edge Function é responsável por:
-       *  1. Ler GEMINI_API_KEY dos Supabase Secrets
-       *  2. Construir o request para a Gemini API
-       *  3. Devolver a resposta normalizada
-       */
-      const payload = {
-        systemPrompt,
-        userPrompt,
-        model:       this.model,
-        temperature: options.temperature ?? 0.7,
-        maxTokens:   options.maxTokens   ?? 2048,
-      };
-
       const response = await fetch(this.edgeFunctionUrl, {
         method:  'POST',
         headers: {
-          'Content-Type': 'application/json',
-          // A autenticação com o Supabase Auth é feita via cookie/session
-          // A Edge Function valida o JWT automaticamente
+          'Content-Type':  'application/json',
+          // JWT do utilizador — a Edge Function valida este token
+          // A GEMINI_API_KEY nunca passa pelo frontend
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body:   JSON.stringify(payload),
         signal: controller.signal,
@@ -133,31 +149,67 @@ export class GeminiProvider implements AIProvider {
 
       clearTimeout(timeoutId);
 
+      // ── 4. Tratar respostas de erro da Edge Function ──────────────────────
       if (!response.ok) {
-        const detail = await response.text().catch(() => undefined);
-        throw new AIProviderNetworkError(this.name, response.status, detail);
+        let errorMsg: string | undefined;
+        try {
+          const errorJson = await response.json();
+          errorMsg = errorJson?.error;
+        } catch {
+          errorMsg = undefined;
+        }
+
+        const status = response.status;
+
+        if (status === 401 || status === 403) {
+          throw new AIProviderAuthError(this.name);
+        }
+        if (status === 429) {
+          throw new AIProviderQuotaError(this.name);
+        }
+        if (status === 504) {
+          throw new AIProviderTimeoutError(this.name, timeoutMs);
+        }
+        throw new AIProviderNetworkError(this.name, status, errorMsg);
       }
 
+      // ── 5. Extrair e devolver resposta ────────────────────────────────────
       const json = await response.json();
 
+      if (!json.text || typeof json.text !== 'string') {
+        throw new Error(`[${this.name}] Resposta da Edge Function sem campo 'text'`);
+      }
+
       return {
-        text:        json.text        ?? '',
-        model:       json.model       ?? this.model,
-        latencyMs:   Date.now() - startTime,
-        tokensUsed:  json.tokensUsed,
+        text:       json.text,
+        model:      json.model      ?? this.model,
+        latencyMs:  Date.now() - startTime,
+        tokensUsed: json.tokensUsed ?? 0,
       };
+
     } catch (err) {
       clearTimeout(timeoutId);
 
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new AIProviderTimeoutError(this.name, timeoutMs);
-      }
+      // Re-lançar erros já controlados
       if (
+        err instanceof AIProviderAuthError    ||
+        err instanceof AIProviderQuotaError   ||
         err instanceof AIProviderNetworkError ||
         err instanceof AIProviderNotReadyError
       ) {
         throw err;
       }
+
+      // Timeout via AbortController
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new AIProviderTimeoutError(this.name, timeoutMs);
+      }
+
+      // Erro de rede (sem conectividade)
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        throw new AIProviderNetworkError(this.name, 0, 'Sem ligação à internet');
+      }
+
       throw new Error(`[${this.name}] Erro inesperado: ${(err as Error).message}`);
     }
   }
