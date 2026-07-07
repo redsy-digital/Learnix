@@ -76,6 +76,9 @@ export interface GeminiProviderConfig {
 const LEARNIX_EDGE_FUNCTION_URL =
   'https://suxrvjkffmthnniyzbeh.supabase.co/functions/v1/ai-complete';
 
+// Modelo confirmado disponível via teste real à API Gemini (07/Jul/2026)
+const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export class GeminiProvider implements AIProvider {
@@ -86,7 +89,7 @@ export class GeminiProvider implements AIProvider {
 
   constructor(config: GeminiProviderConfig = {}) {
     this.edgeFunctionUrl = config.edgeFunctionUrl ?? LEARNIX_EDGE_FUNCTION_URL;
-    this.model           = config.model           ?? 'gemini-1.5-flash';
+    this.model           = config.model           ?? DEFAULT_GEMINI_MODEL;
   }
 
   async isAvailable(): Promise<boolean> {
