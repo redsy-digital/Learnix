@@ -13,7 +13,10 @@ export function buildGenerateExercisesPrompt(
   const { content, context, count = 5, types, analysis } = params;
   const lang       = context.language ?? 'pt-PT';
   const difficulty = context.difficulty ?? analysis?.suggestedDifficulty ?? 'medio';
-  const typesList  = types?.join(', ') ?? 'multiple-choice, open, calculation';
+  // Etapa 13: suporta escolha múltipla, verdadeiro/falso, resposta curta e desenvolvimento.
+  // 'open' cobre tanto resposta curta como desenvolvimento — o texto do enunciado
+  // indica qual das duas formas a IA deve pedir.
+  const typesList  = types?.join(', ') ?? 'multiple-choice, true-false, open';
 
   // Contexto enriquecido se análise prévia disponível
   const analysisContext = analysis
@@ -32,9 +35,13 @@ REGRAS OBRIGATÓRIAS:
 1. Responde APENAS com JSON válido, sem markdown, sem texto extra.
 2. Cria exactamente ${count} questões.
 3. Tipos permitidos: ${typesList}.
+   - "multiple-choice": 4 opções (A-D), exactamente 1 correcta.
+   - "true-false": 2 opções (Verdadeiro/Falso).
+   - "open": pode ser resposta curta (1 frase) OU desenvolvimento (parágrafo) — decide consoante a complexidade do tema; indica no enunciado qual é esperado.
 4. Nível de dificuldade: ${difficulty}.
 5. Idioma: ${lang}.
 6. Inclui SEMPRE explicação detalhada para cada resposta.
+7. Cada questão deve indicar o "topic" (tema relacionado dentro da disciplina).
 
 ESTRUTURA JSON OBRIGATÓRIA:
 {

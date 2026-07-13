@@ -7,6 +7,7 @@
  */
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Brain, Sparkles, BookOpen, Calendar, Target, Clock,
   Zap, ChevronDown, ChevronUp, CheckSquare, Square,
@@ -51,7 +52,7 @@ function VerticalSelector<T extends string>({
 
 export const AIStudy: React.FC = () => {
   const {
-    subjects, config,
+    subjects, allContents, config,
     setSubject, setPeriodFilter, setPeriodStart, setPeriodEnd,
     setSessionType, setDifficulty, setQuestionCount,
     setStudyGoal, setStudyTime, setContentPriority,
@@ -60,6 +61,7 @@ export const AIStudy: React.FC = () => {
     canAnalyse, runAnalysis, resetAnalysis, resetSession,
   } = useAIStudySession();
 
+  const navigate = useNavigate();
   const [contentsExpanded, setContentsExpanded] = useState(true);
   const selectedSubject = subjects.find(s => s.id === config.subjectId);
   const selectedCount   = config.selectedContentIds.length;
@@ -67,6 +69,28 @@ export const AIStudy: React.FC = () => {
   const PERIOD_LABELS: Record<PeriodFilter, string> = {
     '7d': 'Últimos 7 dias', '15d': 'Últimos 15 dias', '30d': 'Últimos 30 dias',
     'specific': 'Data específica', 'range': 'Intervalo', 'all': 'Todo o período',
+  };
+
+  /**
+   * Navega para a sessão de exercícios, passando a configuração completa.
+   * Reutiliza a análise já feita nesta página, se existir — evita
+   * uma segunda chamada a analyzeContent() na página de exercícios.
+   */
+  const handleGenerateExercises = () => {
+    if (!selectedSubject || selectedCount === 0) return;
+    const selectedContents = allContents.filter(c => config.selectedContentIds.includes(c.id));
+
+    navigate('/estudo-ia/exercicios', {
+      state: {
+        generateArgs: {
+          subject:          selectedSubject,
+          selectedContents,
+          existingAnalysis: analysis, // reutiliza se já foi analisado nesta página
+          difficulty:       config.difficulty,
+          questionCount:    config.questionCount,
+        },
+      },
+    });
   };
 
   /* ── RESULTADO DA ANÁLISE ─────────────────────────────────────────────────── */
@@ -458,18 +482,46 @@ export const AIStudy: React.FC = () => {
             </div>
           </div>
 
-          <button onClick={runAnalysis} disabled={!canAnalyse}
-            className={`w-full flex items-center justify-center space-x-3 py-4 px-6 rounded-2xl font-bold text-sm transition shadow-md cursor-pointer ${
-              canAnalyse
-                ? 'bg-gradient-to-tr from-blue-600 to-violet-700 hover:from-blue-700 hover:to-violet-800 text-white shadow-blue-200/60'
-                : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'
-            }`}>
-            {isAnalysing ? (
-              <><Loader2 size={18} className="animate-spin" /><span>A analisar com Gemini…</span></>
-            ) : (
-              <><Brain size={18} /><span>Analisar Conteúdo</span><Sparkles size={14} className={canAnalyse ? 'text-violet-200' : 'text-slate-300'} /></>
-            )}
-          </button>
+          {config.sessionType === 'exercises' ? (
+            <>
+              <button onClick={handleGenerateExercises} disabled={!canAnalyse}
+                className={`w-full flex items-center justify-center space-x-3 py-4 px-6 rounded-2xl font-bold text-sm transition shadow-md cursor-pointer ${
+                  canAnalyse
+                    ? 'bg-gradient-to-tr from-blue-600 to-violet-700 hover:from-blue-700 hover:to-violet-800 text-white shadow-blue-200/60'
+                    : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'
+                }`}>
+                <Sparkles size={18} /><span>Gerar Exercícios</span><Brain size={16} className={canAnalyse ? 'text-violet-200' : 'text-slate-300'} />
+              </button>
+
+              {analysis && (
+                <p className="text-center text-[10px] text-emerald-600 font-semibold -mt-2 flex items-center justify-center space-x-1">
+                  <CheckCircle2 size={11} /><span>Análise já feita será reutilizada — sem chamada extra à IA.</span>
+                </p>
+              )}
+
+              <button onClick={runAnalysis} disabled={!canAnalyse}
+                className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl font-bold text-xs text-slate-600 border border-slate-200 hover:bg-slate-50 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                {isAnalysing ? (
+                  <><Loader2 size={14} className="animate-spin" /><span>A analisar…</span></>
+                ) : (
+                  <><Brain size={14} /><span>Apenas Analisar Conteúdo (sem gerar exercícios)</span></>
+                )}
+              </button>
+            </>
+          ) : (
+            <button onClick={runAnalysis} disabled={!canAnalyse}
+              className={`w-full flex items-center justify-center space-x-3 py-4 px-6 rounded-2xl font-bold text-sm transition shadow-md cursor-pointer ${
+                canAnalyse
+                  ? 'bg-gradient-to-tr from-blue-600 to-violet-700 hover:from-blue-700 hover:to-violet-800 text-white shadow-blue-200/60'
+                  : 'bg-slate-100 text-slate-400 cursor-not-allowed shadow-none'
+              }`}>
+              {isAnalysing ? (
+                <><Loader2 size={18} className="animate-spin" /><span>A analisar com Gemini…</span></>
+              ) : (
+                <><Brain size={18} /><span>Analisar Conteúdo</span><Sparkles size={14} className={canAnalyse ? 'text-violet-200' : 'text-slate-300'} /></>
+              )}
+            </button>
+          )}
 
           {!canAnalyse && !isAnalysing && (
             <p className="text-center text-xs text-amber-600 font-semibold -mt-2">
@@ -482,7 +534,9 @@ export const AIStudy: React.FC = () => {
               <Sparkles size={12} className="text-violet-500" /><span>O que acontece ao clicar?</span>
             </p>
             <p className="text-[11px] text-violet-600 leading-relaxed">
-              O Gemini 2.5 Flash analisa os conteúdos seleccionados, identifica conceitos-chave, objectivos de aprendizagem e recomenda uma estratégia personalizada. Esta análise é a base para exercícios e simulados nas próximas etapas.
+              {config.sessionType === 'exercises'
+                ? 'O Gemini 2.5 Flash analisa os conteúdos (se ainda não o fez) e gera questões personalizadas de escolha múltipla, verdadeiro/falso e desenvolvimento — prontas para responderes de imediato.'
+                : 'O Gemini 2.5 Flash analisa os conteúdos seleccionados, identifica conceitos-chave, objectivos de aprendizagem e recomenda uma estratégia personalizada.'}
             </p>
           </div>
         </div>

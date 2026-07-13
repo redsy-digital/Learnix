@@ -17,6 +17,7 @@ import { Subjects } from './pages/Subjects';
 import { Contents } from './pages/Contents';
 import { StudyCenter } from './pages/StudyCenter';
 import { AIStudy } from './pages/AIStudy';
+import { AIExerciseSession } from './pages/AIExerciseSession';
 import { Schedule } from './pages/Schedule';
 import { Evaluations } from './pages/Evaluations';
 import { Statistics } from './pages/Statistics';
@@ -74,6 +75,7 @@ const AppRoutes: React.FC = () => (
     <Route path="/conteudos"    element={<ProtectedRoute><Contents /></ProtectedRoute>} />
     <Route path="/central"      element={<ProtectedRoute><StudyCenter /></ProtectedRoute>} />
     <Route path="/estudo-ia"    element={<ProtectedRoute><AIStudy /></ProtectedRoute>} />
+    <Route path="/estudo-ia/exercicios" element={<ProtectedRoute><AIExerciseSession /></ProtectedRoute>} />
     <Route path="/horario"      element={<ProtectedRoute><Schedule /></ProtectedRoute>} />
     <Route path="/avaliacoes"   element={<ProtectedRoute><Evaluations /></ProtectedRoute>} />
     <Route path="/estatisticas" element={<ProtectedRoute><Statistics /></ProtectedRoute>} />

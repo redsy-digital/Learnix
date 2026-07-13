@@ -5,9 +5,10 @@
  * poderá importar GeminiProvider, MockProvider ou qualquer prompt/parser
  * directamente. Toda a comunicação com IA passa por esta classe.
  *
- * ESTADO ACTUAL (Etapa 11):
- *  - analyzeContent()  → GeminiProvider (REAL — via Edge Function)
- *  - todas as outras   → MockProvider (a activar progressivamente)
+ * ESTADO ACTUAL (Etapa 13):
+ *  - analyzeContent()     → GeminiProvider (REAL — via Edge Function)
+ *  - generateExercises()  → GeminiProvider (REAL — via Edge Function)
+ *  - restantes            → MockProvider (activar progressivamente)
  *
  * A troca entre providers é totalmente transparente para o resto da aplicação.
  * Os callers apenas usam AIService.método() e recebem AIResponse<T>.
@@ -137,7 +138,9 @@ class AIServiceClass {
   }
 
   /**
-   * generateExercises — MockProvider (activar Gemini na próxima etapa)
+   * generateExercises — usa GeminiProvider REAL (Etapa 13).
+   * Se params.analysis não for fornecido, o chamador deve ter
+   * já executado analyzeContent() antes — ver analyzeAndGenerateExercises().
    */
   async generateExercises(
     params: GenerateExercisesParams
@@ -145,7 +148,7 @@ class AIServiceClass {
     const { systemPrompt, userPrompt } = buildGenerateExercisesPrompt(params);
     return this.execute(
       'generateExercises',
-      this.mockProvider,      // ← Mock até Etapa 12
+      this.primaryProvider,   // ← GeminiProvider real (Etapa 13)
       systemPrompt,
       userPrompt,
       parseExercise,
