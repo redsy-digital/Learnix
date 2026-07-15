@@ -254,8 +254,16 @@ class AIServiceClass {
     if (m.includes('timeout') || m.includes('demorou')) {
       return 'A IA demorou demasiado a responder. Tenta novamente.';
     }
-    if (m.includes('network') || m.includes('fetch') || m.includes('internet')) {
+    // Erro de CORS tem mensagem própria — nunca deve cair no ramo genérico
+    // de "sem internet" abaixo, ou a causa real fica escondida do utilizador.
+    if (m.includes('não está autorizado a comunicar')) {
+      return msg; // mensagem já está em português e é específica o suficiente
+    }
+    if (m.includes('sem ligação à internet')) {
       return 'Sem ligação. Verifica a tua internet e tenta novamente.';
+    }
+    if (m.includes('network') || m.includes('fetch')) {
+      return 'Não foi possível contactar o serviço de IA. Tenta novamente em instantes.';
     }
     if (m.includes('parse') || m.includes('json') || m.includes('campo inválido')) {
       return 'A IA devolveu uma resposta inesperada. Tenta novamente.';

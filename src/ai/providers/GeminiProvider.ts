@@ -59,6 +59,16 @@ export class AIProviderQuotaError extends Error {
   }
 }
 
+export class AIProviderCorsError extends Error {
+  constructor(provider: string, origin: string) {
+    super(
+      `[${provider}] O domínio "${origin}" não está autorizado a comunicar com o serviço de IA. ` +
+      `Contacta o suporte para adicionar este domínio à lista de origens permitidas.`
+    );
+    this.name = 'AIProviderCorsError';
+  }
+}
+
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 export interface GeminiProviderConfig {
@@ -198,7 +208,8 @@ export class GeminiProvider implements AIProvider {
         err instanceof AIProviderAuthError    ||
         err instanceof AIProviderQuotaError   ||
         err instanceof AIProviderNetworkError ||
-        err instanceof AIProviderNotReadyError
+        err instanceof AIProviderNotReadyError ||
+        err instanceof AIProviderCorsError
       ) {
         throw err;
       }
@@ -208,9 +219,20 @@ export class GeminiProvider implements AIProvider {
         throw new AIProviderTimeoutError(this.name, timeoutMs);
       }
 
-      // Erro de rede (sem conectividade)
-      if (err instanceof TypeError && err.message.includes('fetch')) {
-        throw new AIProviderNetworkError(this.name, 0, 'Sem ligação à internet');
+      // TypeError "Failed to fetch" tem MÚLTIPLAS causas possíveis:
+      //  - CORS bloqueado pelo browser (origem não autorizada na Edge Function)
+      //  - Edge Function em baixo ou URL incorrecta
+      //  - falta de ligação à internet
+      // NUNCA assumir "sem internet" sem verificar navigator.onLine primeiro —
+      // essa suposição estava a mascarar erros de CORS como problema de rede.
+      if (err instanceof TypeError && err.message.toLowerCase().includes('fetch')) {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          throw new AIProviderNetworkError(this.name, 0, 'Sem ligação à internet');
+        }
+        // Há ligação à internet mas o fetch falhou de qualquer forma —
+        // o cenário mais provável é CORS (origem não autorizada) ou a
+        // Edge Function estar inacessível. Reportar isso, não "sem internet".
+        throw new AIProviderCorsError(this.name, window.location.origin);
       }
 
       throw new Error(`[${this.name}] Erro inesperado: ${(err as Error).message}`);
