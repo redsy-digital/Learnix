@@ -41,6 +41,7 @@ import {
   parseMockExam,
   parseAnswerExplanation,
 } from '../parsers';
+import { AIParseError } from '../validators/responseValidator';
 
 // Providers
 import { GeminiProvider } from '../providers/GeminiProvider';
@@ -83,13 +84,14 @@ class AIServiceClass {
     systemPrompt: string,
     userPrompt:   string,
     parse:        (rawText: string) => T,
+    maxTokens:    number = 2048,
   ): Promise<AIResponse<T>> {
     const startTime = Date.now();
 
     try {
       const raw = await provider.complete(systemPrompt, userPrompt, {
         temperature: 0.7,
-        maxTokens:   2048,
+        maxTokens,
         timeoutMs:   30_000,
       });
 
@@ -106,11 +108,12 @@ class AIServiceClass {
 
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro desconhecido';
+      const isTruncated = err instanceof AIParseError && err.likelyTruncated;
       console.error(`[AIService] ${featureName} falhou (${provider.name}):`, message);
 
       return {
         success:   false,
-        error:     this.translateError(message),
+        error:     this.translateError(message, isTruncated),
         provider:  provider.name,
         latencyMs: Date.now() - startTime,
       };
@@ -141,17 +144,27 @@ class AIServiceClass {
    * generateExercises — usa GeminiProvider REAL (Etapa 13).
    * Se params.analysis não for fornecido, o chamador deve ter
    * já executado analyzeContent() antes — ver analyzeAndGenerateExercises().
+   *
+   * maxTokens escala com o nº de questões: cada questão (enunciado + opções
+   * + explicação detalhada + dica, em português) ocupa tipicamente
+   * 500-700 tokens. Um valor fixo de 2048 cortava a resposta a meio do
+   * JSON (finishReason: MAX_TOKENS) já a partir de 3-4 questões.
    */
   async generateExercises(
     params: GenerateExercisesParams
   ): Promise<AIResponse<Exercise>> {
     const { systemPrompt, userPrompt } = buildGenerateExercisesPrompt(params);
+    const count = params.count ?? 5;
+    // ~700 tokens por questão + 500 de margem para os campos do envelope
+    // (id, subjectName, totalPoints, etc.) e para a formatação JSON em si.
+    const maxTokens = Math.min(count * 700 + 500, 8192);
     return this.execute(
       'generateExercises',
       this.primaryProvider,   // ← GeminiProvider real (Etapa 13)
       systemPrompt,
       userPrompt,
       parseExercise,
+      maxTokens,
     );
   }
 
@@ -243,7 +256,12 @@ class AIServiceClass {
 
   // ─── Tradução de erros ────────────────────────────────────────────────────────
 
-  private translateError(msg: string): string {
+  private translateError(msg: string, isTruncated: boolean = false): string {
+    // A resposta foi cortada a meio por limite de tokens — mensagem específica
+    // em vez do genérico "resposta inesperada", que não ajudava a diagnosticar.
+    if (isTruncated) {
+      return 'A IA gerou uma resposta demasiado longa para o número de questões pedido. Tenta reduzir a quantidade de questões ou tenta novamente.';
+    }
     const m = msg.toLowerCase();
     if (m.includes('sessão') || m.includes('inicia sessão') || m.includes('auth')) {
       return 'A tua sessão expirou. Inicia sessão novamente e tenta outra vez.';

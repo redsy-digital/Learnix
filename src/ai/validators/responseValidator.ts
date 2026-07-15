@@ -33,9 +33,14 @@ export class AIValidationError extends Error {
 export class AIParseError extends Error {
   constructor(
     public readonly feature: string,
-    public readonly raw:     string
+    public readonly raw:     string,
+    public readonly likelyTruncated: boolean = false,
   ) {
-    super(`[${feature}] Não foi possível fazer parse do JSON da IA`);
+    super(
+      likelyTruncated
+        ? `[${feature}] A resposta da IA foi cortada a meio (provável limite de tokens atingido)`
+        : `[${feature}] Não foi possível fazer parse do JSON da IA`
+    );
     this.name = 'AIParseError';
   }
 }
@@ -45,7 +50,10 @@ export class AIParseError extends Error {
 /**
  * Faz parse do texto da IA em JSON.
  * Remove blocos de markdown (```json ... ```) se presentes.
- * Lança AIParseError se o JSON for inválido.
+ * Lança AIParseError se o JSON for inválido — com likelyTruncated=true
+ * quando o texto não termina com '}' ou ']', o que indica que a resposta
+ * foi cortada antes de terminar (tipicamente por maxOutputTokens
+ * insuficiente para o volume de conteúdo pedido).
  */
 export function parseAIJson(raw: string, feature: string): unknown {
   // Remover blocos markdown que a IA pode incluir por engano
@@ -57,7 +65,11 @@ export function parseAIJson(raw: string, feature: string): unknown {
   try {
     return JSON.parse(cleaned);
   } catch {
-    throw new AIParseError(feature, cleaned);
+    // Um JSON válido termina sempre em '}' ou ']'. Se não terminar assim,
+    // a resposta foi quase certamente cortada a meio (limite de tokens).
+    const lastChar = cleaned.trimEnd().slice(-1);
+    const likelyTruncated = lastChar !== '}' && lastChar !== ']';
+    throw new AIParseError(feature, cleaned, likelyTruncated);
   }
 }
 
