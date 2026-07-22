@@ -56,6 +56,7 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<void>;
+  updateProfileEmail: (newEmail: string) => Promise<void>;
   clearAuthError: () => void;
 }
 
@@ -231,6 +232,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProfile((prev) => prev ? { ...prev, ...data } : prev);
   };
 
+  /**
+   * Alterar o email do utilizador segue o fluxo próprio do Supabase Auth —
+   * nunca um UPDATE directo na tabela profiles. supabase.auth.updateUser
+   * envia automaticamente um email de confirmação para o novo endereço;
+   * o email em auth.users (e, por consequência, o que loadProfile lê)
+   * só muda depois de o utilizador clicar nesse link. Isto está de acordo
+   * com as boas práticas do Supabase Auth: evita que alguém tome posse
+   * de uma conta alterando o email para um endereço que não controla.
+   */
+  const updateProfileEmail = async (newEmail: string) => {
+    setAuthError(null);
+    const { error } = await supabase.auth.updateUser({ email: newEmail });
+    if (error) {
+      const message = translateAuthError(error);
+      setAuthError(message);
+      throw new Error(message);
+    }
+  };
+
   const clearAuthError = () => setAuthError(null);
 
   // ─── Render ──────────────────────────────────────────────────────────────
@@ -249,6 +269,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         resetPassword,
         updateProfile,
+        updateProfileEmail,
         clearAuthError,
       }}
     >

@@ -56,8 +56,19 @@ interface AppContextType {
     school: string;
     streak: number;
     avatarUrl: string;
+    targetUni: string;
+    notifyDaily: boolean;
+    notifyWeekly: boolean;
+    notifyAi: boolean;
   };
-  updateUser: (data: Partial<AppContextType['user']>) => void;
+  updateUser: (data: Partial<Omit<AppContextType['user'], 'email'>>) => Promise<void>;
+  /**
+   * Alterar o email segue o fluxo próprio do Supabase Auth — nunca um
+   * simples UPDATE na tabela profiles. O Supabase envia um email de
+   * confirmação para o novo endereço; o email só muda de facto depois
+   * de o utilizador clicar no link de confirmação.
+   */
+  updateEmail: (newEmail: string) => Promise<void>;
 
   // Auth bridge — para compatibilidade com DashboardLayout e LandingPage
   isLoggedIn: boolean;
@@ -159,27 +170,46 @@ const DEFAULT_AI_QUESTIONS: AIQuestion[] = [
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // ── Ler perfil real do AuthContext ────────────────────────────────────────
-  const { profile, isLoggedIn, signOut, updateProfile } = useAuth();
+  const { profile, isLoggedIn, signOut, updateProfile, updateProfileEmail } = useAuth();
 
   // ── Bridge: expor user no formato que as páginas esperam ─────────────────
   // As páginas usam useApp().user.name, .email, etc.
   // Agora esses valores vêm do perfil real do Supabase.
   const user = {
-    name:       profile?.name        ?? 'Estudante',
-    email:      profile?.email       ?? '',
-    schoolYear: profile?.school_year ?? '',
-    school:     profile?.school      ?? '',
-    streak:     profile?.streak      ?? 0,
-    avatarUrl:  profile?.avatar_url  ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.name ?? 'U')}&background=4F46E5&color=fff&size=150`,
+    name:         profile?.name          ?? 'Estudante',
+    email:        profile?.email         ?? '',
+    schoolYear:   profile?.school_year   ?? '',
+    school:       profile?.school        ?? '',
+    streak:       profile?.streak        ?? 0,
+    avatarUrl:    profile?.avatar_url    ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(profile?.name ?? 'U')}&background=4F46E5&color=fff&size=150`,
+    targetUni:    profile?.target_uni    ?? '',
+    notifyDaily:  profile?.notify_daily  ?? true,
+    notifyWeekly: profile?.notify_weekly ?? true,
+    notifyAi:     profile?.notify_ai     ?? true,
   };
 
-  // updateUser agora persiste no Supabase via updateProfile do AuthContext
-  const updateUser = async (data: Partial<typeof user>) => {
+  // updateUser agora persiste no Supabase via updateProfile do AuthContext.
+  // Cobre todos os campos editáveis de profiles excepto email (ver updateEmail).
+  const updateUser = async (data: Partial<Omit<typeof user, 'email'>>) => {
     await updateProfile({
-      name:        data.name,
-      school:      data.school,
-      school_year: data.schoolYear,
+      ...(data.name         !== undefined && { name:          data.name }),
+      ...(data.school       !== undefined && { school:        data.school }),
+      ...(data.schoolYear   !== undefined && { school_year:   data.schoolYear }),
+      ...(data.targetUni    !== undefined && { target_uni:    data.targetUni }),
+      ...(data.notifyDaily  !== undefined && { notify_daily:  data.notifyDaily }),
+      ...(data.notifyWeekly !== undefined && { notify_weekly: data.notifyWeekly }),
+      ...(data.notifyAi     !== undefined && { notify_ai:     data.notifyAi }),
     });
+  };
+
+  /**
+   * Alterar email delega para o AuthContext, que usa o fluxo próprio
+   * do Supabase Auth (supabase.auth.updateUser) — nunca um UPDATE
+   * directo em profiles. O Supabase envia um email de confirmação
+   * para o novo endereço antes de o email mudar de facto.
+   */
+  const updateEmail = async (newEmail: string) => {
+    await updateProfileEmail(newEmail);
   };
 
   // logout delega para o AuthContext (Supabase Auth)
@@ -309,6 +339,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         user,
         updateUser,
+        updateEmail,
         isLoggedIn,
         logout,
         // Disciplinas reais (Supabase)
